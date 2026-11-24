@@ -48,17 +48,28 @@ pub fn display_capabilities() -> io::Result<Value> {
         }
     }
     let mut touchscreens = Vec::new();
+    let mut absolute_inputs = Vec::new();
     for entry in entries("/sys/class/input")? {
         let device = entry.path().join("device");
         if !entry.file_name().to_string_lossy().starts_with("event") {
             continue;
         }
-        if let Some(name) = text(&device.join("name")).filter(|name| name.contains("touchscreen")) {
-            touchscreens.push(
-                json!({"event":entry.file_name().to_string_lossy(),"name":name,
-                "driver":driver(&device.join("device/driver"))}),
-            );
+        if let Some(name) = text(&device.join("name")) {
+            let input = json!({"event":entry.file_name().to_string_lossy(),"name":name,
+                "driver":driver(&device.join("device/driver"))});
+            if name.contains("touchscreen") {
+                touchscreens.push(input.clone());
+            }
+            if text(&device.join("capabilities/abs")).is_some_and(|bits| {
+                bits.bytes()
+                    .any(|byte| byte.is_ascii_hexdigit() && byte != b'0')
+            }) {
+                absolute_inputs.push(input);
+            }
         }
     }
-    Ok(json!({"drm_cards":cards,"drm_connectors":connectors,"touchscreens":touchscreens}))
+    Ok(
+        json!({"drm_cards":cards,"drm_connectors":connectors,"touchscreens":touchscreens,
+        "absolute_inputs":absolute_inputs}),
+    )
 }

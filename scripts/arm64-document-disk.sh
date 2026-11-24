@@ -28,3 +28,14 @@ timeout 240s python3 tests/arm64_document_disk.py "$bundle/arm64-console.sh" "$s
 debugfs -R "dump /work/note.txt $stage/offline.txt" "$stage/work.raw"
 printf '작업 기록\n재부팅 검증\n전원 중단 검증' | cmp - "$stage/offline.txt"
 echo 'Offline ext4 document bytes verified'
+
+display=build/arm64-display
+mkdir -p "$display" "$stage/features"
+cat > "$stage/features/display.modules" <<'EOF'
+kernel/drivers/gpu/drm
+kernel/drivers/input/evdev.ko*
+kernel/drivers/virtio/virtio_input.ko*
+EOF
+mkinitfs -P "$stage/features" -F 'base virtio ext4 display' -o "$stage/display-initramfs" "${modules[0]##*/}"
+cp "$bundle/starter.raw" "$stage/display.raw"
+timeout 90s python3 tests/arm64_drm.py "$bundle" "$stage/display-initramfs" "$stage/display.raw" "$display"

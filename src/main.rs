@@ -465,6 +465,33 @@ fn document_console(
                 .status()?;
             continue;
         }
+        if line == "display-capabilities" {
+            let result = (|| {
+                if guest_init && !Path::new("/sys/class").is_dir() {
+                    fs::create_dir_all("/sys")?;
+                    let flags =
+                        libc::MS_RDONLY | libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
+                    if unsafe {
+                        libc::mount(
+                            c"sysfs".as_ptr(),
+                            c"/sys".as_ptr(),
+                            c"sysfs".as_ptr(),
+                            flags,
+                            std::ptr::null(),
+                        )
+                    } != 0
+                    {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                hardware::display_capabilities()
+            })();
+            match result {
+                Ok(report) => println!("AIOS_DISPLAY {report}"),
+                Err(error) => println!("AIOS_REJECT display-unavailable {error}"),
+            }
+            continue;
+        }
         let original = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
