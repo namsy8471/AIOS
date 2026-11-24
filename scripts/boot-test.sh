@@ -24,5 +24,8 @@ echo "Booting Linux with QEMU accelerator $accelerator"
 timeout 60s "qemu-system-$arch" "${machine[@]}" -accel "$accelerator" -m "$memory" -display none -serial stdio -monitor none -no-reboot \
   -kernel "$kernel" -initrd build/initramfs.gz -append "console=$console rdinit=/init panic=1" | tee build/serial.log
 grep -Fxq 'AIOS_BOOT_OK pid=1' < <(tr -d '\r' < build/serial.log)
+if [[ $arch == aarch64 ]]; then
+  grep -Eq '^AIOS_ARM64_EDITS samples_us=\[([0-9]+, ){19}[0-9]+\] peak_worker_rss_kib=[1-9][0-9]*' build/serial.log
+fi
 printf 'arch=%s guest_ram=%s init_bytes=%s initramfs_gzip_bytes=%s kernel_bytes=%s\n' \
   "$arch" "$memory" "$(stat -c %s "$root/init")" "$(stat -c %s build/initramfs.gz)" "$(stat -Lc %s "$kernel")"

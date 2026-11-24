@@ -83,6 +83,9 @@ fn main() -> io::Result<std::process::ExitCode> {
     run_demo()?;
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 {
+        if cfg!(target_arch = "aarch64") {
+            measure_guest_edits()?;
+        }
         verify_guest_policy()?;
         println!("AIOS_BOOT_OK pid=1");
         unsafe extern "C" {
@@ -93,6 +96,52 @@ fn main() -> io::Result<std::process::ExitCode> {
         return Err(io::Error::last_os_error());
     }
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(target_os = "linux")]
+fn measure_guest_edits() -> io::Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::process::Command;
+    use std::time::Instant;
+
+    let path = Path::new("/work/arm64-note.txt");
+    let mut expected = String::from("작업 기록");
+    fs::write(path, &expected)?;
+    let mut samples = Vec::new();
+    for index in 1..=20 {
+        let line = format!("\n검토 완료 {index}");
+        let start = Instant::now();
+        let observed = format!("{:x}", Sha256::digest(expected.as_bytes()));
+        let offset = expected.len().to_string();
+        expected.push_str(&line);
+        let revision = format!("{:x}", Sha256::digest(expected.as_bytes()));
+        let status = Command::new("/init")
+            .args([
+                "restrict-worker",
+                "--aios-edit",
+                "arm64-note.txt",
+                &observed,
+                &offset,
+                "0",
+                &line,
+                &revision,
+            ])
+            .status()?;
+        if !status.success() || fs::read(path)? != expected.as_bytes() {
+            return Err(io::Error::other("ARM64 worker edit failed verification"));
+        }
+        samples.push(start.elapsed().as_micros());
+    }
+    // No other children have been launched by the minimal init at this point.
+    // Linux reports the largest individual child's peak RSS in KiB.
+    let mut usage = std::mem::MaybeUninit::uninit();
+    if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let peak = unsafe { usage.assume_init() }.ru_maxrss;
+    println!("AIOS_ARM64_EDITS samples_us={samples:?} peak_worker_rss_kib={peak}");
+    fs::remove_file(path)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
