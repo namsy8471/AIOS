@@ -102,7 +102,7 @@ jobs:
           probe="$bundle/native-board-probe"
           bash scripts/flip4-reference-image.sh --board-probe "$bundle/recovery.img" \
             "$bundle/board-probe-init/board-probe-init.cpio.gz" "$probe"
-          timeout 90s python3 tests/flip4_board_boot.py "$probe" > "$probe/qemu-proof.json"
+          timeout 120s python3 tests/flip4_board_boot.py "$probe" > "$probe/qemu-proof.json"
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-board-diagnostics

@@ -8,6 +8,8 @@ mod flip4_probe;
 #[cfg(target_os = "linux")]
 mod hardware;
 #[cfg(target_os = "linux")]
+mod pmsg;
+#[cfg(target_os = "linux")]
 mod stream_worker;
 #[cfg(target_os = "linux")]
 mod workspace;
@@ -236,23 +238,7 @@ fn probe_pstore(record: &str) -> io::Result<std::process::ExitCode> {
     }
     let message = record.strip_prefix("<4>").unwrap_or(record).as_bytes();
     let message = message.strip_suffix(b"\n").unwrap_or(message);
-    // Android liblog's packed pmsg header, log header, and text payload.
-    // The boot probe executes as root with PID and TID 1.
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(io::Error::other)?;
-    let mut frame = vec![b'l'];
-    let length = 18 + 1 + b"AIOS\0".len() + message.len() + 1;
-    frame.extend_from_slice(&(length as u16).to_le_bytes());
-    frame.extend_from_slice(&0u16.to_le_bytes()); // UID
-    frame.extend_from_slice(&1u16.to_le_bytes()); // PID
-    frame.push(0); // LOG_ID_MAIN
-    frame.extend_from_slice(&1u16.to_le_bytes()); // TID
-    frame.extend_from_slice(&(timestamp.as_secs() as u32).to_le_bytes());
-    frame.extend_from_slice(&timestamp.subsec_nanos().to_le_bytes());
-    frame.extend_from_slice(b"\x04AIOS\0"); // ANDROID_LOG_INFO and tag
-    frame.extend_from_slice(message);
-    frame.push(0);
+    let frame = pmsg::frame(message)?;
     match fs::read("/pstore/pmsg-ramoops-0") {
         Ok(previous)
             if previous
@@ -268,28 +254,7 @@ fn probe_pstore(record: &str) -> io::Result<std::process::ExitCode> {
             ));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let device = fs::read_to_string("/sys/class/pmsg/pmsg0/dev")?;
-            let (major, minor) = device
-                .trim()
-                .split_once(':')
-                .and_then(|(major, minor)| {
-                    Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
-                })
-                .ok_or_else(|| io::Error::other("invalid pmsg device number"))?;
-            if unsafe {
-                libc::mknod(
-                    c"/dev/pmsg0".as_ptr(),
-                    libc::S_IFCHR | 0o600,
-                    libc::makedev(major, minor),
-                )
-            } != 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-            fs::OpenOptions::new()
-                .write(true)
-                .open("/dev/pmsg0")?
-                .write_all(&frame)?;
+            pmsg::open()?.write_all(&frame)?;
             println!("AIOS_PSTORE_WRITTEN");
             unsafe { libc::reboot(libc::RB_AUTOBOOT) };
         }

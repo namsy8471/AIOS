@@ -51,6 +51,50 @@ def boot(directory, load_drivers):
     return {"driver_count": len(module_results), "records": records}
 
 
+def pstore_reboot(directory):
+    dtb = directory / "qemu-ramoops.dtb"
+    machine = "virt,gic-version=3"
+    args = [
+        "qemu-system-aarch64", "-cpu", "max", "-m", "1024M", "-nic", "none", "-display", "none",
+        "-monitor", "none", "-serial", "stdio", "-kernel", directory / "payload/kernel",
+        "-initrd", directory / "payload/ramdisk",
+    ]
+    subprocess.run([*args, "-machine", f"{machine},dumpdtb={dtb}"], check=True, stdout=subprocess.DEVNULL)
+    node = "/reserved-memory/ramoops@70000000"
+    for values in [
+        ["-p", "-c", dtb, node],
+        ["-t", "x", dtb, "/reserved-memory", "#address-cells", "2"],
+        ["-t", "x", dtb, "/reserved-memory", "#size-cells", "2"],
+        ["-t", "x", dtb, "/reserved-memory", "ranges"],
+        ["-t", "s", dtb, node, "compatible", "ramoops"],
+        ["-t", "x", dtb, node, "reg", "0", "70000000", "0", "200000"],
+        ["-t", "x", dtb, node, "pmsg-size", "200000"],
+    ]:
+        subprocess.run(["fdtput", *values], check=True)
+    log_path = directory / "console-pstore.log"
+    with log_path.open("wb") as log:
+        subprocess.run([
+            *args, "-machine", machine, "-dtb", dtb, "-append",
+            "earlycon=pl011,0x9000000 console=ttyAMA0 rdinit=/init panic=1 "
+            "aios.qemu_flip4_probe=1 aios.qemu_flip4_pstore=1",
+        ], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=50, check=True)
+    lines = log_path.read_text(errors="replace").splitlines()
+
+    def records(name):
+        prefix = f"AIOS_FLIP4_{name} "
+        return [json.loads(line.removeprefix(prefix)) for line in lines if line.startswith(prefix)]
+
+    [first, second] = records("BOARD")
+    [written] = records("PSTORE")
+    [recovered] = records("RECOVERED")
+    assert written == {"written": True, "error": None}
+    assert first == second == recovered["board"]
+    for name in ("modules", "display", "devices"):
+        assert records(name.upper()) == [recovered[name]], name
+    assert recovered["modules"] == {"attempted": True, "exit_code": 0, "error": None}
+    return recovered
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
@@ -65,6 +109,7 @@ def main():
         "scope": "qemu_virt", "payload": payload,
         "default": boot(directory, load_drivers=False),
         "driver_opt_in": boot(directory, load_drivers=True),
+        "pstore_after_reboot": pstore_reboot(directory),
     }, indent=2))
 
 

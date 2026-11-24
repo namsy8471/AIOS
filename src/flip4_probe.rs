@@ -1,5 +1,5 @@
 //! Diskless PID 1 for the unsigned Flip4 board diagnostics ramdisk.
-use crate::{hardware, mount_virtual_fs};
+use crate::{hardware, mount_virtual_fs, pmsg};
 use serde_json::json;
 use std::{fs, io, io::Write, path::Path, process::Command};
 
@@ -56,10 +56,67 @@ fn scope(tree: &Path) -> &'static str {
     "unmatched"
 }
 
-fn probe() -> io::Result<bool> {
+const SNAPSHOT_PREFIX: &str = "AIOS_FLIP4_SNAPSHOT ";
+
+fn persist(snapshot: &serde_json::Value) -> io::Result<()> {
+    let mut device = pmsg::open()?;
+    let text = snapshot.to_string();
+    let mut remaining = text.as_str();
+    let mut index = 0;
+    while !remaining.is_empty() {
+        let mut end = remaining.len().min(600);
+        while !remaining.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (chunk, rest) = remaining.split_at(end);
+        let record = format!(
+            "{SNAPSHOT_PREFIX}{}",
+            json!({"index":index, "last":rest.is_empty(), "data":chunk})
+        );
+        device.write_all(&pmsg::frame(record.as_bytes())?)?;
+        remaining = rest;
+        index += 1;
+    }
+    Ok(())
+}
+
+fn read_previous() -> io::Result<Option<serde_json::Value>> {
+    mount_virtual_fs(c"pstore", c"/pstore")?;
+    let raw = match fs::read("/pstore/pmsg-ramoops-0") {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut text = String::new();
+    let mut next = 0;
+    for entry in raw.split(|byte| *byte == 0) {
+        let Some(record) = entry.strip_prefix(SNAPSHOT_PREFIX.as_bytes()) else {
+            continue;
+        };
+        let part: serde_json::Value = serde_json::from_slice(record)?;
+        if part["index"] != next {
+            return Err(io::Error::other("pmsg snapshot chunk is out of order"));
+        }
+        text.push_str(
+            part["data"]
+                .as_str()
+                .ok_or_else(|| io::Error::other("missing pmsg snapshot data"))?,
+        );
+        next += 1;
+        if part["last"] == true {
+            return Ok(Some(serde_json::from_str(&text)?));
+        }
+    }
+    Err(io::Error::other(
+        "no complete AIOS board snapshot in pstore",
+    ))
+}
+
+fn probe() -> io::Result<Option<libc::c_int>> {
     mount_virtual_fs(c"proc", c"/proc")?;
     mount_virtual_fs(c"sysfs", c"/sys")?;
-    let qemu_opt_in = fs::read_to_string("/proc/cmdline")?
+    let cmdline = fs::read_to_string("/proc/cmdline")?;
+    let qemu_opt_in = cmdline
         .split_ascii_whitespace()
         .any(|arg| arg == "aios.qemu_flip4_probe=1");
     let tree = Path::new("/sys/firmware/devicetree/base");
@@ -69,7 +126,18 @@ fn probe() -> io::Result<bool> {
             .trim_end_matches('\0')
             .to_owned()
     });
-    emit("BOARD", json!({"scope":scope, "model":model}));
+    let board = json!({"scope":scope, "model":model});
+    emit("BOARD", board.clone());
+    let qemu_pstore = scope == "qemu_virt"
+        && cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "aios.qemu_flip4_pstore=1");
+    if qemu_pstore {
+        if let Some(previous) = read_previous()? {
+            emit("RECOVERED", previous);
+            return Ok(Some(libc::RB_POWER_OFF));
+        }
+    }
     let load_drivers = scope == "cape_flip4_candidate" || (scope == "qemu_virt" && qemu_opt_in);
     let loader = load_drivers.then(|| Command::new("/usr/bin/flip4-driver-loader").status());
     let (exit_code, error) = match loader {
@@ -77,25 +145,37 @@ fn probe() -> io::Result<bool> {
         Some(Err(error)) => (None, Some(error.to_string())),
         None => (None, None),
     };
-    emit(
-        "MODULES",
-        json!({"attempted":load_drivers, "exit_code":exit_code, "error":error}),
-    );
-    // Keep console records separate so a long device list cannot hide the scope.
-    emit("DISPLAY", hardware::display_capabilities()?);
-    emit("DEVICES", hardware::device_numbers()?);
+    let modules = json!({"attempted":load_drivers, "exit_code":exit_code, "error":error});
+    emit("MODULES", modules.clone());
+    let display = hardware::display_capabilities()?;
+    let devices = hardware::device_numbers()?;
+    emit("DISPLAY", display.clone());
+    emit("DEVICES", devices.clone());
+    if qemu_pstore || scope == "cape_flip4_candidate" {
+        let snapshot =
+            json!({"board":board, "modules":modules, "display":display, "devices":devices});
+        let result = persist(&snapshot);
+        emit(
+            "PSTORE",
+            json!({"written":result.is_ok(), "error":result.as_ref().err().map(ToString::to_string)}),
+        );
+        if qemu_pstore {
+            result?;
+            return Ok(Some(libc::RB_AUTOBOOT));
+        }
+    }
     emit("DONE", json!({"scope":scope}));
-    // Tests may request poweroff. A physical diagnostic keeps PID 1 resident.
-    Ok(qemu_opt_in && scope == "qemu_virt")
+    // A physical diagnostic keeps PID 1 resident.
+    Ok((qemu_opt_in && scope == "qemu_virt").then_some(libc::RB_POWER_OFF))
 }
 
 pub fn run() -> ! {
     match probe() {
-        Ok(true) => unsafe {
-            libc::reboot(libc::RB_POWER_OFF);
+        Ok(Some(action)) => unsafe {
+            libc::reboot(action);
             emit("ERROR", json!(io::Error::last_os_error().to_string()));
         },
-        Ok(false) => (),
+        Ok(None) => (),
         Err(error) => emit("ERROR", json!(error.to_string())),
     }
     loop {

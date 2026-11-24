@@ -11,7 +11,7 @@ strip "$root/init"
 mknod -m 600 "$root/dev/kmsg" c 1 11
 mknod -m 600 "$root/dev/console" c 5 1
 if [[ ${3:-} == flip4-board-probe ]]; then
-  mkdir -p "$root/etc" "$root/proc" "$root/sys"
+  mkdir -p "$root/etc" "$root/proc" "$root/sys" "$root/pstore"
   touch "$root/etc/aios-flip4-board-probe"
   (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/board-probe-init.cpio.gz"
   exit
