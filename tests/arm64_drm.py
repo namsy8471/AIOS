@@ -10,6 +10,7 @@ import time
 
 bundle, initramfs, disk, output = map(Path, sys.argv[1:5])
 local_model = sys.argv[5:] == ["--model"]
+multitouch = sys.argv[5:] == ["--multitouch"]
 monitor = disk.with_suffix(".qmp")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
@@ -22,7 +23,7 @@ args = [
     "-qmp", f"unix:{monitor},server=on,wait=off",
     "-kernel", str(bundle / "vmlinuz-virt"), "-initrd", str(initramfs),
     "-drive", f"file={disk},if=virtio,format=raw",
-    "-device", "virtio-gpu-pci", "-device", "virtio-tablet-pci",
+    "-device", "virtio-gpu-pci", "-device", "virtio-multitouch-pci" if multitouch else "virtio-tablet-pci",
     "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw rw modules=virtio_gpu,virtio_input,evdev panic=1",
 ]
 
@@ -59,7 +60,23 @@ def capture_frame(stream, screenshot, colors, row_fraction=0.5):
     raise RuntimeError("QEMU scanout did not contain the expected diagnostic colors")
 
 
+def contact(stream, slot, tracking, x=None, y=None):
+    events = [
+        {"type": "mtt", "data": {"type": "end" if tracking < 0 else "begin",
+         "slot": slot, "tracking-id": tracking, "axis": "x", "value": 0}},
+    ]
+    if x is not None:
+        events.extend({"type": "mtt", "data": {"type": "data", "slot": slot,
+                       "tracking-id": tracking, "axis": axis, "value": value}}
+                      for axis, value in (("x", x), ("y", y)))
+    qmp(stream, "input-send-event", {"events": events})
+
+
 def tap(stream, x, y):
+    if multitouch:
+        contact(stream, 0, 1, x, y)
+        contact(stream, 0, -1)
+        return
     qmp(stream, "input-send-event", {"events": [
         {"type": "abs", "data": {"axis": "x", "value": x}},
         {"type": "abs", "data": {"axis": "y", "value": y}},
@@ -82,7 +99,8 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
         assert any(card["driver"] == "virtio-pci" for card in report["drm_cards"]), report
         assert "[drm] Initialized virtio_gpu " in Path(log.name).read_text(errors="replace")
         assert any(port["status"] == "connected" and port["modes"] for port in report["drm_connectors"]), report
-        assert any("Tablet" in device["name"] for device in report["absolute_inputs"]), report
+        expected_device = "multitouch" if multitouch else "tablet"
+        assert any(expected_device in device["name"].lower() for device in report["absolute_inputs"]), report
         frame = command(vm, log, "display-frame", "AIOS_")
         assert frame.startswith("AIOS_FRAME_READY "), frame
         screenshot = output / "scanout.ppm"
@@ -118,6 +136,12 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 else:
                     assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 capture_frame(stream, output / "confirmation.ppm", ("38425a", "12192d", "204caf"), 0.79)
+                if multitouch:
+                    contact(stream, 0, 1, 24576, 24576)
+                    contact(stream, 1, 2, 8192, 24576)
+                    contact(stream, 0, -1)
+                    contact(stream, 1, -1)
+                    capture_frame(stream, output / "after-two-fingers.ppm", ("38425a", "12192d", "204caf"), 0.79)
                 tap(stream, 24576, 24576)
                 expected = original + "\n우유"
                 revision = hashlib.sha256(expected.encode()).hexdigest()
@@ -125,6 +149,7 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 assert read_document(vm, revision)["text"] == expected
                 assert command(vm, log, request, "AIOS_") == "AIOS_REJECT invalid-edit"
                 report["confirmed_note"] = {"text": expected, "revision": revision}
+                report["input_protocol"] = "multitouch-type-b" if multitouch else "absolute-pointer"
         report["scanout_verified"] = frame.removeprefix("AIOS_FRAME_READY ")
         vm.stdin.write(b"poweroff\n")
         vm.stdin.flush()

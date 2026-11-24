@@ -10,6 +10,7 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include "display-confirm.h"
+#include "display-input.h"
 
 static void draw_frame(void *pixels, const struct drm_mode_create_dumb *buffer, int selected) {
     const uint32_t colors[] = {0x00cc3322, 0x0022aa55, 0x002244cc};
@@ -33,7 +34,7 @@ static int axis_pixel(int value, const struct input_absinfo *axis, int size) {
 
 static int handle_input(int input, int drm, uint32_t framebuffer, void *pixels,
                         const struct drm_mode_create_dumb *buffer,
-                        struct input_absinfo *x, struct input_absinfo *y, int confirm) {
+                        struct touch_input *touch, int confirm) {
     struct pollfd sources[] = {{STDIN_FILENO, POLLIN, 0}, {input, POLLIN, 0}};
     int button_event = 0;
     int pressed_button = -1;
@@ -45,18 +46,34 @@ static int handle_input(int input, int drm, uint32_t framebuffer, void *pixels,
         struct input_event event;
         if (!(sources[1].revents & POLLIN) || read(input, &event, sizeof(event)) != sizeof(event))
             return 1;
-        if (event.type == EV_ABS && event.code == ABS_X)
-            x->value = event.value;
-        else if (event.type == EV_ABS && event.code == ABS_Y)
-            y->value = event.value;
-        else if (event.type == EV_KEY && (event.code == BTN_LEFT || event.code == BTN_TOUCH) && event.value != 2)
-            button_event = event.value ? 1 : 2;
-        else if (event.type == EV_SYN && event.code == SYN_DROPPED) {
-            button_event = 0;
-            pressed_button = -1;
-        } else if (event.type == EV_SYN && event.code == SYN_REPORT && button_event) {
-            int px = axis_pixel(x->value, x, buffer->width);
-            int py = axis_pixel(y->value, y, buffer->height);
+        if (event.type == EV_SYN && event.code == SYN_DROPPED)
+            return confirm ? 42 : 1;
+        if (touch->slots && event.type == EV_ABS) {
+            int action = touch_event(touch, &event);
+            if (action)
+                button_event = action;
+        } else if (!touch->slots) {
+            if (event.type == EV_ABS && event.code == ABS_X)
+                touch->x.value = event.value;
+            else if (event.type == EV_ABS && event.code == ABS_Y)
+                touch->y.value = event.value;
+            else if (event.type == EV_KEY && (event.code == BTN_LEFT || event.code == BTN_TOUCH) && event.value != 2)
+                button_event = event.value ? 1 : 2;
+        }
+        if (event.type == EV_SYN && event.code == SYN_REPORT) {
+            if (touch->blocked) {
+                if (!touch->count)
+                    touch->blocked = 0;
+                button_event = 0;
+                pressed_button = -1;
+                continue;
+            }
+            if (!button_event)
+                continue;
+            int x = touch->slots ? touch->contacts[touch->selected].x : touch->x.value;
+            int y = touch->slots ? touch->contacts[touch->selected].y : touch->y.value;
+            int px = axis_pixel(x, &touch->x, buffer->width);
+            int py = axis_pixel(y, &touch->y, buffer->height);
             if (confirm) {
                 int hit = -1;
                 for (int save = 0; save <= 1; ++save) {
@@ -106,7 +123,7 @@ int main(int argc, char **argv) {
     void *pixels = MAP_FAILED;
     uint32_t framebuffer = 0;
     int input = -1;
-    struct input_absinfo x, y;
+    struct touch_input touch;
     if (!resources || resources->count_crtcs < 1)
         goto cleanup;
     for (int index = 0; index < resources->count_connectors; ++index) {
@@ -140,10 +157,8 @@ int main(int argc, char **argv) {
     } else {
         draw_frame(pixels, &buffer, -1);
     }
-    input = open("/dev/input/event0", O_RDONLY | O_CLOEXEC);
-    if (input < 0 || ioctl(input, EVIOCGABS(ABS_X), &x) < 0 ||
-        ioctl(input, EVIOCGABS(ABS_Y), &y) < 0 ||
-        x.maximum <= x.minimum || y.maximum <= y.minimum)
+    input = open_input(&touch);
+    if (input < 0)
         goto cleanup;
     if (drmModeAddFB(fd, buffer.width, buffer.height, 24, 32, buffer.pitch, buffer.handle, &framebuffer))
         goto cleanup;
@@ -151,7 +166,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     printf("%s %ux%u\n", confirm ? "AIOS_CONFIRM_READY" : "AIOS_FRAME_READY", buffer.width, buffer.height);
     fflush(stdout);
-    result = handle_input(input, fd, framebuffer, pixels, &buffer, &x, &y, confirm);
+    result = handle_input(input, fd, framebuffer, pixels, &buffer, &touch, confirm);
     if (previous && previous->mode_valid)
         drmModeSetCrtc(fd, crtc, previous->buffer_id, previous->x, previous->y,
                        &connector->connector_id, 1, &previous->mode);
