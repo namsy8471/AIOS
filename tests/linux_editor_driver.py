@@ -47,7 +47,10 @@ def wait(editor, expected):
         if state == expected:
             return window
         time.sleep(0.05)
-    raise RuntimeError(f"editor did not reach {expected}")
+    tree = [(app.get_name(), app.get_process_id(),
+             [(w.get_name(), w.get_role_name()) for w in children(app)])
+            for app in children(Atspi.get_desktop(0))]
+    raise RuntimeError(f"PID {editor.pid} did not reach {expected}; desktop: {tree}")
 
 
 def control(window, name, interface):
@@ -83,6 +86,7 @@ def command(editor, line):
 
 def main():
     fixture = Path(__file__).with_name("editor_fixture.py")
+    Atspi.get_desktop(0)
     editor = subprocess.Popen([sys.executable, str(fixture), *sys.argv[1:]],
                               stdin=subprocess.DEVNULL, stdout=sys.stderr)
     try:

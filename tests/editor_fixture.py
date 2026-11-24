@@ -44,9 +44,11 @@ def qt_editor(path):
     from PyQt5.QtWidgets import (QApplication, QDialog, QPlainTextEdit,
                                  QPushButton, QVBoxLayout, QWidget)
 
-    app = QApplication([])
+    app = QApplication(["aios-qt-editor"])
+    app.setApplicationName("AIOS Qt editor")
     window = QWidget()
     window.setWindowTitle("AIOS test editor")
+    window.setAccessibleName("AIOS test editor")
     body = QPlainTextEdit(path.read_text(encoding="utf-8"))
     body.setAccessibleName("Document")
     save = QPushButton("Save")
