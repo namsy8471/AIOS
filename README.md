@@ -51,6 +51,8 @@ GTK 측정에는 편집기 시작과 저장 확인이 포함됩니다. 두 경�
 
 ### ARM64 문서 콘솔
 
+플립4 복구용 참조 커널을 오프라인으로 조사할 때는 `python scripts/inspect-phone-kernel.py <압축을 푼 ARM64 Image>`를 사용합니다. 고정된 커뮤니티 바이너리에서 추출한 버전은 `5.10.168-android12-9-Flippity-`입니다. 내장 빌드 설정에는 initramfs·ext4·F2FS·SELinux가 활성화되어 있었고 devtmpfs·Btrfs·사용자 네임스페이스는 비활성화되어 있었습니다. Landlock 항목은 없었습니다. 검사 결과의 `null`은 설정에서 항목을 찾지 못했다는 뜻입니다. 이 커널을 대상으로 초기 사용자 공간을 만들 때는 장치 노드를 제공할 경로와 문서 작업 격리를 각각 검증해야 합니다. [조사한 ARM64 커널](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/prebuilt/kernel)
+
 플립4의 공개 복구 이미지에 포함된 `dtbo.img`를 분석하면 B4Q 하드웨어 오버레이가 10개 있습니다. 그 파일의 `dtbo-hw_rev`부터 `dtbo-hw_rev_end`까지를 포함 범위로 읽으면 `waipio` 항목은 0·1·3, `cape` 항목은 2·5·6·7·8·9·10–32입니다. 4에 해당하는 항목은 이 파일에서 확인되지 않습니다. 실기기의 펌웨어와 보드 정보를 확보한 뒤 해당 펌웨어의 오버레이와 대조해야 합니다. 연결 정보 수집기는 Android에서 읽을 수 있는 경우 보드 ID와 하드웨어 리비전을 원래 바이트 순서의 16진수로 기록합니다. [분석한 커뮤니티 DTBO](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/prebuilt/dtbo.img)
 
 플립4 실기기 준비에는 세부 모델, 펌웨어 빌드, 실행 중인 커널 버전이 필요합니다. Windows에서 USB 디버깅을 이미 허용한 기기가 한 대 연결되어 있으면 `scripts/flip4-inventory.ps1`로 해당 값을 읽을 수 있습니다. PC에서 조사한 커뮤니티 플립4 복구 환경의 설정은 ARM64, 부팅 헤더 v2, 페이지 크기 4096을 사용합니다. 실물 펌웨어와 일치하는지는 별도 확인이 필요합니다. [플립4 복구 보드 설정](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/BoardConfig.mk)
