@@ -39,6 +39,15 @@ pub fn launcher(branch: &Path, args: &[OsString], profile: Profile) -> io::Resul
             "0700",
             "--dir",
             "/tmp/runtime",
+            "--symlink",
+            "/tmp/runtime/passwd",
+            "/etc/passwd",
+            "--symlink",
+            "/tmp/runtime/group",
+            "/etc/group",
+            "--symlink",
+            "/tmp/runtime/machine-id",
+            "/etc/machine-id",
         ])
         .env("XDG_RUNTIME_DIR", "/tmp/runtime")
         .env("HOME", "/tmp")
@@ -123,6 +132,23 @@ pub fn exec_worker(args: &[OsString], desktop: bool) -> io::Result<std::process:
         }
     }
     if desktop {
+        // The private bus needs an identity for its own uid. Keep host account
+        // records and the host machine identifier outside the session.
+        let uid = unsafe { libc::geteuid() };
+        let gid = unsafe { libc::getegid() };
+        let machine = std::fs::read_to_string("/proc/sys/kernel/random/uuid")?.replace('-', "");
+        for (name, text) in [
+            (
+                "passwd",
+                format!("agent:x:{uid}:{gid}:AIOS session:/tmp:/bin/sh\n"),
+            ),
+            ("group", format!("agent:x:{gid}:\n")),
+            ("machine-id", machine),
+        ] {
+            use std::io::Write;
+            std::fs::File::create_new(Path::new("/tmp/runtime").join(name))?
+                .write_all(text.as_bytes())?;
+        }
         for (path, rights) in [
             (
                 "/tmp",
