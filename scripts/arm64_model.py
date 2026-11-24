@@ -123,7 +123,8 @@ def main(launch=None):
     engine.add_argument("--guest-model", action="store_true", help="use built-in Korean commands with local model inference for additional phrasings")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
-    if not args.disk.is_file() or args.disk.samefile(launcher.with_name("starter.raw")):
+    starter = launcher.with_name("starter.raw")
+    if not args.disk.is_file() or (starter.is_file() and args.disk.samefile(starter)):
         parser.error("provide a separate working disk")
     if args.instruction is not None and not args.instruction.strip():
         parser.error("empty instruction")
