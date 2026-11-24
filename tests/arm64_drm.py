@@ -25,7 +25,10 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
         wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
         reply = command(vm, log, "display-capabilities", "AIOS_")
         report = json.loads(reply.removeprefix("AIOS_DISPLAY "))
-        assert any(card["driver"] == "virtio_gpu" for card in report["drm_cards"]), report
+        # DRM's device symlink points to the PCI transport, while the kernel
+        # log names the graphics driver that registered the DRM card.
+        assert any(card["driver"] == "virtio-pci" for card in report["drm_cards"]), report
+        assert "[drm] Initialized virtio_gpu " in Path(log.name).read_text(errors="replace")
         assert any(port["status"] == "connected" and port["modes"] for port in report["drm_connectors"]), report
         assert any("Tablet" in device["name"] for device in report["absolute_inputs"]), report
         vm.stdin.write(b"poweroff\n")
