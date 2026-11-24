@@ -1,8 +1,10 @@
-"""Start one offline document session on the second emulated serial port."""
+"""Start one offline document session on the virtio-vsock or a serial channel."""
 import errno
 import fcntl
 import os
 import re
+import select
+import socket
 from pathlib import Path
 import subprocess
 import sys
@@ -60,30 +62,58 @@ def activity_database(root):
     return directory / "events.sqlite"
 
 
+def serve(args):
+    env = {**os.environ, "AIOS_MANAGED_GUEST": "1"}
+    devices = Path("/sys/bus/virtio/devices").glob("*/device")
+    vsock = any(int(device.read_text().strip(), 0) == 19 for device in devices)
+    server = None
+    try:
+        if vsock:
+            subprocess.run(["modprobe", "vmw_vsock_virtio_transport"], check=True)
+            with socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM) as listener:
+                listener.bind((socket.VMADDR_CID_ANY, 4050))
+                listener.listen(1)
+                print("AIOS_RUNTIME_READY transport=vsock", flush=True)
+                while True:
+                    if server is not None and server.poll() is not None:
+                        server = None
+                    readers = [sys.stdin] if server is not None else [sys.stdin, listener]
+                    readable, _, _ = select.select(readers, [], [], 0.1 if server else None)
+                    if sys.stdin in readable and sys.stdin.readline().strip() in ("", "poweroff"):
+                        return
+                    if listener in readable:
+                        channel, peer = listener.accept()
+                        with channel:
+                            if peer[0] == socket.VMADDR_CID_HOST:
+                                server = subprocess.Popen(args, stdin=channel, stdout=channel, env=env)
+        else:
+            with open("/dev/ttyS1", "r+b", buffering=0) as channel:
+                tty.setraw(channel)
+                server = subprocess.Popen(args, stdin=channel, stdout=channel, env=env)
+                print("AIOS_RUNTIME_READY transport=serial", flush=True)
+                for line in sys.stdin:
+                    if line.strip() == "poweroff":
+                        return
+    finally:
+        if server is not None:
+            if server.poll() is None:
+                server.terminate()
+            server.wait()
+
+
 root = Path("/mnt/aios-data")
 root.mkdir(parents=True, exist_ok=True)
 subprocess.run(["mount", "-t", "btrfs", "-o", "nodev,nosuid,noexec",
                 "LABEL=AIOS-DATA", str(root)], check=True)
 try:
-    with open("/dev/ttyS1", "r+b", buffering=0) as channel:
-        tty.setraw(channel)
-        workspace = root / "documents"
-        if workspace.is_symlink() or not workspace.is_dir():
-            raise ValueError("Expected a documents subvolume")
-        recover_sessions(root)
-        with subprocess.Popen([
-            "/opt/aios/venv/bin/python", "/opt/aios/mcp_server.py",
-            "--aios", "/usr/local/bin/aios", "--workspace", str(workspace),
-            "--document", "note.txt", "--activity-db", str(activity_database(root)),
-        ], stdin=channel, stdout=channel, env={**os.environ, "AIOS_MANAGED_GUEST": "1"}) as server:
-            try:
-                print("AIOS_RUNTIME_READY", flush=True)
-                for line in sys.stdin:
-                    if line.strip() == "poweroff":
-                        break
-            finally:
-                server.terminate()
-                server.wait()
+    workspace = root / "documents"
+    if workspace.is_symlink() or not workspace.is_dir():
+        raise ValueError("Expected a documents subvolume")
+    recover_sessions(root)
+    serve(["/opt/aios/venv/bin/python", "/opt/aios/mcp_server.py",
+           "--aios", "/usr/local/bin/aios", "--workspace", str(workspace),
+           "--document", "note.txt", "--activity-db", str(activity_database(root))])
+
 finally:
     os.sync()
     subprocess.run(["umount", str(root)], check=True)
