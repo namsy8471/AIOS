@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,8 +42,10 @@ def verify(binary, mount):
     subprocess.run(["btrfs", "filesystem", "sync", mount], check=True)
     before = tree_hash(root)
     marker = mount / "autosave"
+    worker = mount / "workspace_recovery.py"
+    shutil.copyfile(__file__, worker)
     command = [binary, "workspace-run", root, "--", sys.executable]
-    failure = subprocess.run([*command, __file__, "failed-editor", marker],
+    failure = subprocess.run([*command, worker, "failed-editor", marker],
                              capture_output=True, text=True)
     print(failure.stderr, flush=True)
     assert failure.returncode == 23, failure
