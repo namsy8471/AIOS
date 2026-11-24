@@ -7,6 +7,7 @@ from typing import Literal
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict
 
+from activity import Activity, StagedDiscarded, tracked
 from document import MAX_BYTES, append_bytes, digest, read_document
 
 
@@ -38,7 +39,7 @@ class SaveDecision(BaseModel):
     save: bool
 
 
-def create_server(binary, workspace, filename):
+def create_server(binary, workspace, filename, activity_db=None):
     if Path(filename).name != filename or filename in ("", ".", ".."):
         raise ValueError("Select one filename directly inside the managed workspace")
     document_path = workspace / filename
@@ -52,6 +53,9 @@ def create_server(binary, workspace, filename):
     mcp = FastMCP("AIOS documents", instructions=(
         f"This session can edit only {filename!r}. Use edit_document to group changes in one commit. Use read_text, replace_text and direct append_line for "
         "document work. Select gtk or qt only for tasks requiring an editor UI."))
+
+    audit = Activity(activity_db, str(document_path)) if activity_db else None
+    track = tracked(audit)
 
     def checked_document(document, revision):
         if document != filename:
@@ -90,7 +94,7 @@ def create_server(binary, workspace, filename):
                     pass
                 await process.wait()
         if code == 43:
-            raise ValueError("Staged edit discarded")
+            raise StagedDiscarded("Staged edit discarded")
         if code == 42:
             raise ValueError("Document revision changed before editing; inspect again")
         if code != 0:
@@ -98,12 +102,14 @@ def create_server(binary, workspace, filename):
         return DocumentRevision(document=filename, bytes=len(expected), revision=digest(expected))
 
     @mcp.tool()
+    @track
     def inspect_document() -> DocumentRevision:
         """Return the authorized filename, UTF-8 byte count and current SHA-256 revision."""
         data = read_document(document_path)
         return DocumentRevision(document=filename, bytes=len(data), revision=digest(data))
 
     @mcp.tool()
+    @track
     def read_text(document: str, revision: str, offset: int = 0, limit: int = 4096) -> DocumentPage:
         """Read a revision in Unicode code points. Follow next_offset until it is null."""
         data = checked_document(document, revision)
@@ -115,6 +121,7 @@ def create_server(binary, workspace, filename):
                             text=text[offset:end], next_offset=end if end < len(text) else None)
 
     @mcp.tool()
+    @track
     async def append_line(document: str, revision: str, line: str, ctx: Context,
                           editor: Literal["direct", "gtk", "qt"] = "direct", review: bool = False) -> DocumentRevision:
         """Append directly by default. Select gtk or qt for UI work, or review to confirm the save."""
@@ -142,6 +149,7 @@ def create_server(binary, workspace, filename):
         return expected, (start, len(before), new)
 
     @mcp.tool()
+    @track
     async def replace_text(document: str, revision: str, old: str, new: str, ctx: Context,
                            review: bool = False) -> DocumentRevision:
         """Replace one exact, unique passage. Use an empty replacement to delete it."""
@@ -152,6 +160,7 @@ def create_server(binary, workspace, filename):
                              f"Save this replacement in {filename}? Before: {old} After: {new}")
 
     @mcp.tool()
+    @track
     async def edit_document(document: str, revision: str, edits: list[AppendLine | ReplaceText],
                             ctx: Context, review: bool = False) -> DocumentRevision:
         """Apply 1-32 ordered edits to one revision and publish all changes together."""
@@ -178,6 +187,12 @@ def create_server(binary, workspace, filename):
         return await publish("agent-run", edit_args(revision, ranges, expected), ctx, review,
                              expected, prompt)
 
+    if audit is not None:
+        @mcp.tool()
+        def recent_activity(limit: int = 20) -> list[dict]:
+            """Read recent request outcomes for this document, newest first."""
+            return audit.recent(limit)
+
     return mcp
 
 
@@ -186,6 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("--aios", required=True, type=Path)
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--document", required=True)
+    parser.add_argument("--activity-db", type=Path)
     args = parser.parse_args()
     create_server(args.aios.resolve(strict=True), args.workspace.resolve(strict=True),
-                  args.document).run(transport="stdio")
+                  args.document, args.activity_db).run(transport="stdio")

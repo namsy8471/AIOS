@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -164,6 +165,12 @@ with tempfile.TemporaryDirectory() as temp:
                         expected = expected.replace("최종본".encode(), "공유본".encode()) + "\r\n검토 완료".encode()
                         assert saved["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
                         assert rpc(45, "tools/call", dict(name="edit_document", arguments=batch))["isError"]
+                        history = rpc(46, "tools/call", dict(name="recent_activity", arguments={"limit": 100}))
+                        entries = history["structuredContent"]["result"]
+                        assert entries[0]["tool"] == "edit_document" and entries[0]["outcome"] == "rejected"
+                        assert any(e["tool"] == "edit_document" and e["outcome"] == "succeeded"
+                                   and e["revision"] == hashlib.sha256(expected).hexdigest() for e in entries)
+                        assert any(e["tool"] == "edit_document" and e["outcome"] == "discarded" for e in entries)
                         Path("build/runtime/append-latency.json").write_text(json.dumps(timings))
                 vm.stdin.write(b"poweroff\n")
                 vm.stdin.flush()
@@ -182,4 +189,20 @@ with tempfile.TemporaryDirectory() as temp:
     assert [path.name for path in restored.glob(".aios-session-*")] == [sentinel]
     assert (restored / sentinel / "keep").read_bytes() == b"unmanaged"
     assert (restored / "documents/note.txt").read_bytes() == expected
+    archive = restored / ".aios-activity/events.sqlite"
+    db = sqlite3.connect(f"{archive.as_uri()}?mode=ro", uri=True)
+    rows = db.execute("SELECT at_ns,grant_id,request,tool,outcome,revision,hash FROM events ORDER BY seq").fetchall()
+    previous = ""
+    requests = {}
+    for *fields, stored in rows:
+        data = json.dumps([previous, *fields], ensure_ascii=True, separators=(",", ":")).encode()
+        assert hashlib.sha256(data).hexdigest() == stored
+        previous = stored
+        requests.setdefault(fields[2], []).append(fields[4])
+    assert all(len(pair) == 2 and pair[0] == "started" for pair in requests.values())
+    assert sum(pair[-1] == "outcome_unknown" for pair in requests.values()) == 1
+    assert any(r[3:5] == ("append_line", "outcome_unknown") for r in rows)
+    assert all(value.encode() not in archive.read_bytes() for value in ("승인 후 전원 차단", "미승인 변경", "검토 완료"))
+    db.close()
+    print("Verified persistent broker activity across three boots:", len(requests), "requests")
     print("Verified GTK and Qt commits, pending edit isolation, cancellation, stale rejection and offline CRLF bytes")

@@ -38,6 +38,23 @@ def recover_sessions(root):
         os.close(fd)
 
 
+def activity_database(root):
+    directory = root / ".aios-activity"
+    try:
+        directory.mkdir(mode=0o700)
+    except FileExistsError:
+        if directory.is_symlink() or not directory.is_dir():
+            raise RuntimeError("Invalid activity directory")
+    info = directory.stat()
+    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise RuntimeError("Activity directory must be private to the broker")
+    for entry in directory.iterdir():
+        if (entry.name not in ("events.sqlite", "events.sqlite-journal") or entry.is_symlink()
+                or not entry.is_file() or entry.stat().st_nlink != 1):
+            raise RuntimeError("Unexpected activity database entry")
+    return directory / "events.sqlite"
+
+
 root = Path("/mnt/aios-data")
 root.mkdir(parents=True, exist_ok=True)
 subprocess.run(["mount", "-t", "btrfs", "-o", "nodev,nosuid,noexec",
@@ -52,7 +69,7 @@ try:
         with subprocess.Popen([
             "/opt/aios/venv/bin/python", "/opt/aios/mcp_server.py",
             "--aios", "/usr/local/bin/aios", "--workspace", str(workspace),
-            "--document", "note.txt",
+            "--document", "note.txt", "--activity-db", str(activity_database(root)),
         ], stdin=channel, stdout=channel, env={**os.environ, "AIOS_MANAGED_GUEST": "1"}) as server:
             try:
                 print("AIOS_RUNTIME_READY", flush=True)
