@@ -24,8 +24,14 @@ static int open_input(struct touch_input *state) {
         if (fd < 0)
             continue;
         int rank = 1;
-        if (ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &slot) == 0) {
-            if (slot.minimum != 0 || slot.maximum < 0 || slot.maximum >= TOUCH_SLOTS ||
+        unsigned char axes[(ABS_MAX + 8) / 8] = {0};
+        if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(axes)), axes) < 0) {
+            close(fd);
+            continue;
+        }
+        if (axes[ABS_MT_SLOT / 8] & (1u << (ABS_MT_SLOT % 8))) {
+            if (ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &slot) < 0 ||
+                slot.minimum != 0 || slot.maximum < 0 || slot.maximum >= TOUCH_SLOTS ||
                 slot.value < 0 || slot.value > slot.maximum ||
                 ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &candidate.x) < 0 ||
                 ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &candidate.y) < 0) {
