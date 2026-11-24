@@ -1,4 +1,5 @@
 """Exercise only the target editor's accessibility interfaces."""
+import os
 import signal
 import subprocess
 import sys
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import gi
 gi.require_version("Atspi", "2.0")
-from gi.repository import Atspi, GLib
+from gi.repository import Atspi, Gio, GLib
 
 
 def children(node):
@@ -87,7 +88,12 @@ def command(editor, line):
 def main():
     fixture = Path(__file__).with_name("editor_fixture.py")
     Atspi.get_desktop(0)
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    address = bus.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus",
+                            "GetAddress", None, GLib.VariantType.new("(s)"),
+                            Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
     editor = subprocess.Popen([sys.executable, str(fixture), *sys.argv[1:]],
+                              env={**os.environ, "AT_SPI_BUS_ADDRESS": address},
                               stdin=subprocess.DEVNULL, stdout=sys.stderr)
     try:
         wait(editor, "ready")

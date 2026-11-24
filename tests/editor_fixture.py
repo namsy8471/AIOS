@@ -40,8 +40,8 @@ def gtk_editor(path):
 
 
 def qt_editor(path):
-    from PyQt5.QtCore import QTimer
-    from PyQt5.QtWidgets import (QApplication, QDialog, QPlainTextEdit,
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import (QApplication, QDialog, QPlainTextEdit,
                                  QPushButton, QVBoxLayout, QWidget)
 
     app = QApplication(["aios-qt-editor"])
@@ -64,7 +64,7 @@ def qt_editor(path):
     timer.timeout.connect(lambda: None)
     timer.start(50)
     window.show()
-    app.exec_()
+    app.exec()
 
 
 if __name__ == "__main__":
