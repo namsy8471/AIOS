@@ -55,6 +55,31 @@ fn main() -> io::Result<std::process::ExitCode> {
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
+        if command == "kernel-capabilities" {
+            // LANDLOCK_CREATE_RULESET_VERSION queries the ABI without installing a policy.
+            let abi = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    std::ptr::null::<u8>(),
+                    0usize,
+                    1u32,
+                )
+            };
+            let error = (abi < 0)
+                .then(|| io::Error::last_os_error().raw_os_error())
+                .flatten();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "landlock_abi": (abi >= 0).then_some(abi),
+                    "query_errno": error,
+                    "document_worker_minimum_abi": 3,
+                    "meets_abi_minimum": abi >= 3,
+                })
+            );
+            return Ok(std::process::ExitCode::SUCCESS);
+        }
+        #[cfg(target_os = "linux")]
         if command == "workspace-run" || command == "agent-run" || command == "agent-gui-run" {
             let profile = match command.to_str() {
                 Some("agent-run") => Some(agent::Profile::Document),
@@ -145,6 +170,12 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                 Ok(report) => println!("AIOS_MEMORY {report}"),
                 Err(error) => println!("AIOS_REJECT memory-unavailable {error}"),
             }
+            continue;
+        }
+        if line == "kernel-capabilities" {
+            std::process::Command::new("/init")
+                .arg("kernel-capabilities")
+                .status()?;
             continue;
         }
         let original = fs::read_to_string(path)?;

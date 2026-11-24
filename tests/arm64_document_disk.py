@@ -27,6 +27,9 @@ for boot, expected in enumerate((original, saved, durable), 1):
     ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+            capabilities = json.loads(command(vm, log, "kernel-capabilities", "{"))
+            assert capabilities["landlock_abi"] >= 3 and capabilities["meets_abi_minimum"], capabilities
+            print(f"ARM64 kernel capabilities: {capabilities}", flush=True)
             reply = command(vm, log, "memory", "AIOS_")
             assert reply.startswith("AIOS_MEMORY "), reply
             memory = json.loads(reply.removeprefix("AIOS_MEMORY "))
