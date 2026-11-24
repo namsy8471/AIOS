@@ -14,6 +14,16 @@ python aios_mvp.py
 
 실행마다 현재 폴더 아래에 별도 디렉터리를 만들고 가상 디스크, 부팅 로그 두 개, 수정 전후 본문과 SHA-256을 담은 `proof.json`을 남깁니다. VM에는 메모리 2 GiB를 할당합니다. CI 검증 호스트는 Linux x86_64입니다.
 
+### PC용 UEFI USB 가상 부팅
+
+같은 ISO를 QEMU에서 읽기 전용 USB 저장장치로 연결해 부팅할 수 있습니다. `--usb-uefi`에는 짝이 맞는 x86_64 UEFI 펌웨어와 변수 템플릿을 지정합니다. Ubuntu 24.04의 `ovmf` 패키지에서는 다음과 같이 실행합니다.
+
+```sh
+python aios_mvp.py --usb-uefi /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_VARS_4M.fd
+```
+
+문서는 별도 가상 디스크에 저장합니다. CI는 두 부팅의 UEFI 로그에서 USB 장치를 확인하고, 재부팅 후 문서가 일치하면 `usb-proof.json`과 부팅 로그를 아티팩트에 추가합니다. 실물 PC 부팅과 Secure Boot는 별도 검증 대상입니다. [GRUB 부팅 이미지 문서](https://www.gnu.org/software/grub/manual/grub/grub.html#Making-a-GRUB-bootable-CD_002dROM)
+
 ### 로컬 모델로 같은 작업 실행하기
 
 GitHub Actions에서 **Bootable document runtime → Run workflow**를 실행하면 Linux 호스트 CPU에서 Qwen2.5-3B-Instruct를 구동합니다. 모델은 한국어 지시와 AIOS가 제공하는 문서 도구 목록을 받아 다음 호출을 선택합니다. 문서 저장은 부팅된 AIOS 안에서 수행합니다. 매번 다른 네 자리 숫자가 들어간 문장을 요청하고, 두 번째 부팅에서 원문과 추가한 한 줄이 정확히 일치하는지 검사합니다. 모델 추론에는 계정 등록이나 API 키가 필요 없습니다.
