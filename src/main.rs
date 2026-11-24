@@ -362,6 +362,22 @@ fn document_console() -> io::Result<std::process::ExitCode> {
     use std::io::BufRead;
     let path = Path::new("/work/note.txt");
     let staged = Path::new("/work/.aios-note-staging");
+    if Path::new("/etc/aios-qemu-work-partition").is_file() {
+        // This image's second partition is dedicated to documents.
+        let flags = libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
+        if unsafe {
+            libc::mount(
+                c"/dev/sda2".as_ptr(),
+                c"/work".as_ptr(),
+                c"ext4".as_ptr(),
+                flags,
+                std::ptr::null(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
     let stream = Path::new("/etc/aios-stream-worker").is_file();
     if stream {
         use std::os::unix::process::ExitStatusExt;

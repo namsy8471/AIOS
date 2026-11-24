@@ -16,13 +16,15 @@ jobs:
       - name: Attempt a diskless boot on QEMU virt
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64 e2fsprogs dtc
+            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64 e2fsprogs dtc parted
             cargo build --locked --release --target aarch64-unknown-linux-musl
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/pstore pstore
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/document document
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/bundle disk
             cp build/flip4/kernel scripts/flip4_model.py scripts/arm64_model.py scripts/model_mvp.py build/flip4/bundle/
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/split split-disk
+            timeout 90s python3 tests/flip4_split_disk.py build/flip4/bundle build/flip4/split/split.raw > build/flip4/split/proof.json
             cd build/flip4/bundle
             sha256sum kernel starter.raw *.py > SHA256SUMS
           '
@@ -41,7 +43,10 @@ jobs:
         if: always()
         with:
           name: flip4-reference-probe-log
-          path: build/flip4/*/console.log
+          path: |
+            build/flip4/*/console.log
+            build/flip4/split/console-*.log
+            build/flip4/split/proof.json
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-virtual-disk

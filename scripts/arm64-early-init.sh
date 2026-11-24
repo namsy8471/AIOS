@@ -15,12 +15,31 @@ if [[ ${3:-} == pstore ]]; then
   mkdir "$root/sys" "$root/pstore"
   touch "$root/aios-pstore-probe"
 fi
-if [[ ${3:-} == document || ${3:-} == disk ]]; then
+if [[ ${3:-} == document || ${3:-} == disk || ${3:-} == split-disk ]]; then
   mkdir "$root/etc" "$root/work"
   touch "$root/etc/aios-document-console" "$root/etc/aios-stream-worker"
   printf '장보기' > "$root/work/note.txt"
   printf 'private' > "$root/work/sibling.txt"
   mknod -m 666 "$root/dev/null" c 1 3
+fi
+if [[ ${3:-} == split-disk ]]; then
+  mkdir "$root/proc" "$root/work-data"
+  mv "$root/work/"*.txt "$root/work-data/"
+  touch "$root/etc/aios-qemu-work-partition"
+  mknod -m 600 "$root/dev/sda2" b 8 2
+  # Keep ext4 data and partition offsets aligned to 1 MiB.
+  truncate -s 16M "$out/work.ext4"
+  mkfs.ext4 -q -F -d "$root/work-data" "$out/work.ext4"
+  rm -r -- "$root/work-data"
+  truncate -s 16M "$out/system.ext4"
+  mkfs.ext4 -q -F -d "$root" "$out/system.ext4"
+  disk="$out/split.raw"
+  truncate -s 34M "$disk"
+  parted -s "$disk" mklabel msdos \
+    mkpart primary ext4 1MiB 17MiB mkpart primary ext4 17MiB 33MiB
+  dd if="$out/system.ext4" of="$disk" bs=1M seek=1 conv=notrunc status=none
+  dd if="$out/work.ext4" of="$disk" bs=1M seek=17 conv=notrunc status=none
+  exit
 fi
 if [[ ${3:-} == disk ]]; then
   truncate -s 48M "$out/starter.raw"
