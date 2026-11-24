@@ -211,7 +211,9 @@ fn korean_append(instruction: &str) -> Option<&str> {
 
 #[cfg(target_os = "linux")]
 fn model_append_text(instruction: &str) -> io::Result<String> {
-    use std::os::unix::process::CommandExt;
+    use std::io::Read;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::process::{ExitStatus, Stdio};
     if instruction.len() > 512
         || instruction.chars().any(char::is_control)
         || instruction.contains("<|")
@@ -221,7 +223,8 @@ fn model_append_text(instruction: &str) -> io::Result<String> {
     let prompt = format!(
         "<|im_start|>system\nExtract the exact text to append from the Korean memo request. Output only that text without quotes. For example: 메모에 사과를 적어줘 -> 사과<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
     );
-    let output = std::process::Command::new("/opt/model/llama-simple")
+    let started = std::time::Instant::now();
+    let mut child = std::process::Command::new("/opt/model/llama-simple")
         .args([
             "-m",
             "/opt/model/model.gguf",
@@ -233,18 +236,38 @@ fn model_append_text(instruction: &str) -> io::Result<String> {
         ])
         .uid(65534)
         .gid(65534)
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "inference failed: {}",
-            output.status
-        )));
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut stdout = String::new();
+    let read = child.stdout.take().unwrap().read_to_string(&mut stdout);
+    let mut status = 0;
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    loop {
+        // Reap this exact model process and retrieve its lifetime peak RSS.
+        if unsafe { libc::wait4(child.id() as i32, &mut status, 0, usage.as_mut_ptr()) } >= 0 {
+            break;
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
     }
-    let stdout = String::from_utf8(output.stdout).map_err(io::Error::other)?;
+    read?;
+    let status = ExitStatus::from_raw(status);
+    if !status.success() {
+        return Err(io::Error::other(format!("inference failed: {status}")));
+    }
     let text = stdout.strip_prefix(&prompt).unwrap_or("").trim();
     if text.is_empty() || text.chars().any(char::is_control) || !instruction.contains(text) {
         return Err(io::Error::other("model returned no verbatim memo text"));
     }
+    let usage = serde_json::json!({
+        "inference_ms": started.elapsed().as_millis(),
+        "model_peak_rss_kib": unsafe { usage.assume_init() }.ru_maxrss,
+    });
+    println!("MODEL_USAGE {usage}");
     Ok(text.to_owned())
 }
 

@@ -88,11 +88,23 @@ jobs:
       - name: Infer and save in the disconnected ARM64 guest
         run: |
           cd build/flip4
-          timeout 600s python3 flip4_model.py model.raw --guest-model --instruction "메모에 '우유'를 적어줘." > inferred.json
-          timeout 60s python3 flip4_model.py model.raw --show > reopened.json
+          cp --sparse=always model.raw inference-work.raw
+          timeout 600s python3 flip4_model.py inference-work.raw --guest-model --instruction "메모에 '우유'를 적어줘." > inferred.json 2> usage.json
+          jq -se 'length == 1 and .[0].model_peak_rss_kib > 0 and .[0].inference_ms > 0' usage.json
+          timeout 60s python3 flip4_model.py inference-work.raw --show > reopened.json
           cmp inferred.json reopened.json
           jq -e '.text == "장보기\n우유"' reopened.json
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference
-          path: build/flip4/inferred.json
+          path: |
+            build/flip4/inferred.json
+            build/flip4/usage.json
+      - run: cd build/flip4 && sha256sum model.raw > MODEL_SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-guest-model-disk
+          retention-days: 7
+          path: |
+            build/flip4/model.raw
+            build/flip4/MODEL_SHA256SUMS

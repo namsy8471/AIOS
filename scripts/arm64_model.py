@@ -15,6 +15,8 @@ def wait(vm, log, prefix):
         if log is not None:
             log.write(raw)
         line = raw.decode(errors="replace").strip()
+        if line.startswith("MODEL_USAGE "):
+            print(line.removeprefix("MODEL_USAGE "), file=sys.stderr, flush=True)
         if line.startswith(prefix):
             return line
         if "Kernel panic" in line:
