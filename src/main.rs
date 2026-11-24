@@ -520,6 +520,9 @@ fn document_console(
             continue;
         }
         let generated;
+        let confirmation = guest_init
+            .then(|| line.strip_prefix("confirm-append "))
+            .flatten();
         let korean = line.strip_prefix("korean ");
         let model_request = line.strip_prefix("model-append ").zip(model);
         let edit = if let Some(request) = korean.or(model_request.map(|(request, _)| request)) {
@@ -553,7 +556,9 @@ fn document_console(
                 None
             }
         } else {
-            line.strip_prefix("append ").and_then(|r| r.split_once(' '))
+            confirmation
+                .or_else(|| line.strip_prefix("append "))
+                .and_then(|r| r.split_once(' '))
         };
         let Some((revision, text)) = edit else {
             println!("AIOS_REJECT invalid-request");
@@ -566,6 +571,26 @@ fn document_console(
         {
             println!("AIOS_REJECT invalid-edit");
             continue;
+        }
+        if confirmation.is_some() {
+            if text.len() > 512 || text.trim().is_empty() || text.chars().any(char::is_control) {
+                println!("AIOS_REJECT invalid-edit");
+                continue;
+            }
+            match std::process::Command::new("/usr/bin/display-frame")
+                .arg(text)
+                .status()
+            {
+                Ok(status) if status.success() => {}
+                Ok(status) if status.code() == Some(42) => {
+                    println!("AIOS_REJECT confirmation-canceled");
+                    continue;
+                }
+                _ => {
+                    println!("AIOS_REJECT display-frame-unavailable");
+                    continue;
+                }
+            }
         }
         let addition = if original.is_empty() || original.ends_with('\n') {
             text.to_owned()
