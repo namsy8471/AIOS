@@ -5,17 +5,14 @@ permissions:
 jobs:
   boot:
     runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - name: Test the host demo
         run: cargo test --locked
-      - name: Install guest build and boot tools
-        run: |
-          rustup target add x86_64-unknown-linux-musl
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 linux-image-virtual cpio
       - name: Boot the Rust init
         run: |
-          kernel=$(find /boot -name 'vmlinuz-*-generic' | sort -V | tail -1)
-          sudo install -m 644 "$kernel" build-kernel
-          bash scripts/boot-test.sh build-kernel
+          docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
+            apk add --no-cache bash coreutils cpio findutils gcc linux-virt musl-dev qemu-system-x86_64 sudo
+            bash scripts/boot-test.sh /boot/vmlinuz-virt
+          '
