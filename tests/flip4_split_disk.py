@@ -44,19 +44,21 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
         args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     ) as vm:
         try:
-            if options.guest_model:
-                wait(vm, log, "AIOS_MODEL_PARTITION_READ_ONLY")
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+            if options.guest_model:
+                assert b"AIOS_MODEL_PARTITION_READ_ONLY" in log_path.read_bytes(), "model partition was not mounted"
             assert read_document(vm, revision, log=log)["text"] == text
             if index == 0:
                 if options.guest_model:
-                    usage_line = command(vm, log, f"model-append {revision} 메모에 '{addition}'를 적어줘.", "MODEL_USAGE ")
-                    usage = json.loads(usage_line.removeprefix("MODEL_USAGE "))
-                    assert usage["inference_ms"] > 0 and usage["model_peak_rss_kib"] > 0, usage
-                    reply = wait(vm, log, "AIOS_")
+                    reply = command(vm, log, f"model-append {revision} 메모에 '{addition}'를 적어줘.", "AIOS_")
                 else:
                     reply = command(vm, log, f"append {revision} {addition}", "AIOS_")
                 assert reply == f"AIOS_SAVED revision={revisions[1]}", reply
+                if options.guest_model:
+                    record, = [line.removeprefix(b"MODEL_USAGE ") for line in log_path.read_bytes().splitlines()
+                               if line.startswith(b"MODEL_USAGE ")]
+                    usage = json.loads(record)
+                    assert usage["inference_ms"] > 0 and usage["model_peak_rss_kib"] > 0, usage
                 stale = command(vm, log, f"append {revision} 거절될 변경", "AIOS_")
                 assert stale == "AIOS_REJECT invalid-edit", stale
             vm.stdin.write(b"poweroff\n")

@@ -31,6 +31,8 @@ if [[ ${3:-} == split-disk ]]; then
   truncate -s 16M "$out/work.ext4"
   mkfs.ext4 -q -F -d "$root/work-data" "$out/work.ext4"
   rm -r -- "$root/work-data"
+  # The cpio archive preserves the root directory mode. The model runs as an unprivileged UID.
+  chmod 0755 "$root"
   touch "$root/etc/aios-qemu-ramdisk"
   mknod -m 600 "$root/dev/sda1" b 8 1
   (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/document-init.cpio.gz"
