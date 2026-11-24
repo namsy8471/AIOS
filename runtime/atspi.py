@@ -1,5 +1,6 @@
 """Resolve controls inside a single editor process through AT-SPI."""
 from contextlib import contextmanager
+import json
 import os
 import subprocess
 import sys
@@ -101,6 +102,18 @@ def observe_text(node, expected):
 
 def command(editor, line, title):
     state, window = snapshot(editor.pid, title)
+    if line == "observe":
+        elements = []
+        if state == "ready":
+            body = control(window, "Document", "EditableText")
+            button = control(window, "Save", "Action")
+            elements = [
+                {"element_id": "body", "name": body.get_name(), "role": "textbox",
+                 "value": Atspi.Text.get_text(body, 0, -1), "actions": ["append"]},
+                {"element_id": "save", "name": button.get_name(), "role": "button",
+                 "actions": ["invoke"]},
+            ]
+        return json.dumps({"state": state, "elements": elements})
     if state != "ready":
         return "blocked-" + state
     if line.startswith("append "):

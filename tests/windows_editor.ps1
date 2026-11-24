@@ -181,6 +181,20 @@ try {
     [Console]::WriteLine('ready')
     while ($null -ne ($line = [Console]::ReadLine())) {
         $observation = Get-State
+        if ($line -eq 'observe') {
+            $nodes = @()
+            if ($observation.State -eq 'ready') {
+                $control = Get-DocumentControl $observation.Window $Toolkit
+                $null = Get-Pattern $observation.Window 'Save' ([Windows.Automation.InvokePattern]::Pattern)
+                $nodes = @(
+                    @{element_id='body'; name='Document'; role='textbox'; actions=@('append');
+                      value=(Read-DocumentValue $control).Replace("`r`n", "`n")}
+                    @{element_id='save'; name='Save'; role='button'; actions=@('invoke')}
+                )
+            }
+            [Console]::WriteLine((@{state=$observation.State; elements=$nodes} | ConvertTo-Json -Depth 5 -Compress))
+            continue
+        }
         if ($observation.State -ne 'ready') { [Console]::WriteLine("blocked-$($observation.State)"); continue }
         $main = $observation.Window
         if ($line.StartsWith('append ')) {
