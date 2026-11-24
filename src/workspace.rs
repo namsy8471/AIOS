@@ -12,10 +12,18 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-fn run_worker(branch: &Path, args: &[OsString], interrupted: &AtomicUsize) -> io::Result<u8> {
+fn run_worker(
+    branch: &Path,
+    args: &[OsString],
+    interrupted: &AtomicUsize,
+    agent: bool,
+) -> io::Result<u8> {
     // util-linux binds the namespace init's lifetime to the unshare supervisor.
-    let mut worker = Command::new("unshare")
-        .args([
+    let mut command = if agent {
+        crate::agent::launcher(branch, args)?
+    } else {
+        let mut cli = Command::new("unshare");
+        cli.args([
             "--user",
             "--map-root-user",
             "--pid",
@@ -25,9 +33,10 @@ fn run_worker(branch: &Path, args: &[OsString], interrupted: &AtomicUsize) -> io
             "--",
         ])
         .args(args)
-        .current_dir(branch)
-        .process_group(0)
-        .spawn()?;
+        .current_dir(branch);
+        cli
+    };
+    let mut worker = command.process_group(0).spawn()?;
     loop {
         let signal = interrupted.load(Ordering::SeqCst);
         if signal != 0 {
@@ -56,7 +65,7 @@ fn btrfs(operation: &str, paths: &[&Path]) -> io::Result<()> {
     Ok(())
 }
 
-pub fn run(args: &[OsString]) -> io::Result<ExitCode> {
+pub fn run(args: &[OsString], agent: bool) -> io::Result<ExitCode> {
     if args.len() < 3 || args[1] != "--" {
         return Err(io::Error::other(
             "usage: aios workspace-run PATH -- PROGRAM [ARG...]",
@@ -96,7 +105,7 @@ pub fn run(args: &[OsString]) -> io::Result<ExitCode> {
     eprintln!("checkpoint_us={}", start.elapsed().as_micros());
     // The workload is PID 1 in its own PID namespace. Linux tears down all
     // remaining processes there when PID 1 exits, including detached writers.
-    let result = run_worker(&branch, &args[2..], &interrupted);
+    let result = run_worker(&branch, &args[2..], &interrupted, agent);
     let signal = interrupted.load(Ordering::SeqCst);
     let accepted = signal == 0 && matches!(result, Ok(0));
     let start = Instant::now();

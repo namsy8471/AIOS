@@ -1,5 +1,7 @@
 use std::{fs, io, path::Path};
 #[cfg(target_os = "linux")]
+mod agent;
+#[cfg(target_os = "linux")]
 mod workspace;
 
 struct Editor {
@@ -47,8 +49,12 @@ fn main() -> io::Result<std::process::ExitCode> {
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
-        if command == "workspace-run" {
-            return workspace::run(&args.collect::<Vec<_>>());
+        if command == "workspace-run" || command == "agent-run" {
+            return workspace::run(&args.collect::<Vec<_>>(), command == "agent-run");
+        }
+        #[cfg(target_os = "linux")]
+        if command == "restrict-worker" {
+            return agent::exec_worker(&args.collect::<Vec<_>>());
         }
         return Err(io::Error::other(format!("unknown command: {command:?}")));
     }
