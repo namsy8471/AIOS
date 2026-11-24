@@ -1,5 +1,6 @@
 """Verify the confined worker, its child, and the host's independent view."""
 import errno
+import fcntl
 import os
 from pathlib import Path
 import socket
@@ -44,7 +45,6 @@ def verify(binary, mount):
         command = [binary, "agent-run", work, "--", "/usr/bin/python3", "-I", "check.py",
                    "inside", str(protected), str(receiver.getsockname()[1])]
         with protected.open("r+b") as host_file:
-            import fcntl
             high_fd = fcntl.fcntl(host_file, fcntl.F_DUPFD_CLOEXEC, 200)
             try:
                 subprocess.run([*command, str(high_fd)], check=True, timeout=10,
@@ -59,6 +59,11 @@ def verify(binary, mount):
             conn.close()
             raise AssertionError("host received a connection")
     assert protected.read_bytes() == b"host original"
+    assert (work / "result.txt").read_text(encoding="utf-8") == "검토 완료"
+    failed = subprocess.run([binary, "agent-run", work, "--", "/usr/bin/python3", "-I", "-c",
+                             "from pathlib import Path; Path('result.txt').write_text('pending'); "
+                             "open('/dev/null', 'wb')"], capture_output=True, text=True, timeout=10)
+    assert failed.returncode != 0 and "PermissionError" in failed.stderr, failed
     assert (work / "result.txt").read_text(encoding="utf-8") == "검토 완료"
     print("Agent committed its document; protected file intact; host received zero connections")
 
