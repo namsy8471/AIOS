@@ -316,7 +316,12 @@ fn korean_append(instruction: &str) -> Option<&str> {
 }
 
 #[cfg(target_os = "linux")]
-fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::Result<String> {
+fn model_append_text(
+    instruction: &str,
+    model: &Path,
+    guest_init: bool,
+    structured: bool,
+) -> io::Result<String> {
     use std::io::Read;
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::process::{ExitStatus, Stdio};
@@ -326,8 +331,20 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
     {
         return Err(io::Error::other("invalid instruction"));
     }
+    let system = if structured {
+        concat!(
+            "Extract the exact text to append from the Korean memo request. ",
+            "Return one JSON object with tool append_line and line. No markdown. ",
+            "Example: 메모에 사과를 적어줘 -> {\"tool\":\"append_line\",\"line\":\"사과\"}"
+        )
+    } else {
+        concat!(
+            "Extract the exact text to append from the Korean memo request. ",
+            "Output only that text without quotes. For example: 메모에 사과를 적어줘 -> 사과"
+        )
+    };
     let prompt = format!(
-        "<|im_start|>system\nExtract the exact text to append from the Korean memo request. Output only that text without quotes. For example: 메모에 사과를 적어줘 -> 사과<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
+        "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
     );
     let started = std::time::Instant::now();
     let mut command = std::process::Command::new(model.join("llama-simple"));
@@ -337,7 +354,13 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
     let mut child = command
         .arg("-m")
         .arg(model.join("model.gguf"))
-        .args(["-ngl", "0", "-n", "24", &prompt])
+        .args([
+            "-ngl",
+            "0",
+            "-n",
+            if structured { "64" } else { "24" },
+            &prompt,
+        ])
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -362,7 +385,14 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
     if !status.success() {
         return Err(io::Error::other(format!("inference failed: {status}")));
     }
-    let text = stdout.strip_prefix(&prompt).unwrap_or("").trim();
+    let output = stdout.strip_prefix(&prompt).unwrap_or("").trim();
+    let proposal;
+    let text = if structured {
+        proposal = serde_json::from_str(output).map_err(io::Error::other)?;
+        model_proposed_line(&proposal)?
+    } else {
+        output
+    };
     if text.is_empty() || text.chars().any(char::is_control) || !instruction.contains(text) {
         return Err(io::Error::other("model returned no verbatim memo text"));
     }
@@ -372,6 +402,36 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
     });
     println!("MODEL_USAGE {usage}");
     Ok(text.to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn model_proposed_line(proposal: &serde_json::Value) -> io::Result<&str> {
+    let fields = proposal.as_object().filter(|fields| {
+        fields.len() == 2
+            && fields.get("tool").and_then(|tool| tool.as_str()) == Some("append_line")
+    });
+    fields
+        .and_then(|fields| fields.get("line"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| io::Error::other("expected append_line tool and one text line"))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn graphical_model_accepts_only_append_line() {
+    use serde_json::json;
+    assert_eq!(
+        model_proposed_line(&json!({"tool":"append_line","line":"우유"})).unwrap(),
+        "우유"
+    );
+    for rejected in [
+        json!({"tool":"replace_text","line":"우유"}),
+        json!({"tool":"append_line","line":42}),
+        json!({"tool":"append_line","line":"우유","revision":"forged"}),
+        json!("우유"),
+    ] {
+        assert!(model_proposed_line(&rejected).is_err(), "{rejected}");
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -729,10 +789,16 @@ fn document_console(
                 println!("AIOS_READ revision={observed}");
                 continue;
             }
-            if let Some(text) = korean_append(instruction) {
+            if let Some(text) = korean_append(instruction).filter(|_| model_confirmation.is_none())
+            {
                 Some((revision, text))
             } else if let Some((_, model_dir)) = model_request {
-                match model_append_text(instruction, model_dir, guest_init) {
+                match model_append_text(
+                    instruction,
+                    model_dir,
+                    guest_init,
+                    model_confirmation.is_some(),
+                ) {
                     Ok(text) => generated = text,
                     Err(error) => {
                         println!("AIOS_REJECT {error}");
@@ -765,6 +831,13 @@ fn document_console(
                 println!("AIOS_REJECT invalid-edit");
                 continue;
             }
+            if model_confirmation.is_some() {
+                let proposal = serde_json::json!({
+                    "name": "append_line",
+                    "arguments": {"document": "note.txt", "revision": revision, "line": text},
+                });
+                println!("MODEL_PROPOSAL {proposal}");
+            }
             match DisplaySession::request(&mut display, text) {
                 Ok(0) => {}
                 Ok(42) => {
@@ -773,6 +846,17 @@ fn document_console(
                 }
                 _ => {
                     println!("AIOS_REJECT display-frame-unavailable");
+                    continue;
+                }
+            }
+            match fs::read_to_string(&path) {
+                Ok(current) if current == original => {}
+                Ok(_) => {
+                    println!("AIOS_REJECT invalid-edit");
+                    continue;
+                }
+                Err(error) => {
+                    println!("AIOS_REJECT storage-read-error {error}");
                     continue;
                 }
             }

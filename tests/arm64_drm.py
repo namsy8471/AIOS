@@ -48,11 +48,16 @@ def model_proposal(vm, log, revision):
     assert ready.startswith("AIOS_CONFIRM_READY "), ready
     with Path(log.name).open("rb") as transcript:
         transcript.seek(start)
-        record, = [line.removeprefix(b"MODEL_USAGE ") for line in transcript
-                   if line.startswith(b"MODEL_USAGE ")]
-    stats = json.loads(record)
-    assert stats["inference_ms"] > 0 and stats["model_peak_rss_kib"] > 0, stats
-    return stats
+        lines = transcript.read().splitlines()
+    usage, = [json.loads(line.removeprefix(b"MODEL_USAGE ")) for line in lines
+              if line.startswith(b"MODEL_USAGE ")]
+    proposal, = [json.loads(line.removeprefix(b"MODEL_PROPOSAL ")) for line in lines
+                 if line.startswith(b"MODEL_PROPOSAL ")]
+    assert usage["inference_ms"] > 0 and usage["model_peak_rss_kib"] > 0, usage
+    assert proposal == {"name": "append_line", "arguments": {
+        "document": "note.txt", "revision": revision, "line": "우유",
+    }}, proposal
+    return usage, proposal
 
 
 def qmp(stream, name, arguments=None):
@@ -181,12 +186,15 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
 
                 if local_model:
                     addition = "우유"
-                    canceled = model_proposal(vm, log, before)
+                    canceled, canceled_proposal = model_proposal(vm, log, before)
                     tap(stream, 8192, 24576)
                     assert wait(vm, log, "AIOS_") == "AIOS_REJECT confirmation-canceled"
-                    report["model_cancellation"] = {"usage": canceled, "note": read_document(vm, before, log=log)}
+                    report["model_cancellation"] = {
+                        "usage": canceled, "proposal": canceled_proposal,
+                        "note": read_document(vm, before, log=log),
+                    }
                     assert report["model_cancellation"]["note"] == {"text": original, "revision": before}
-                    report["model_usage"] = model_proposal(vm, log, before)
+                    report["model_usage"], report["model_proposal"] = model_proposal(vm, log, before)
                 else:
                     assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 preview = output / "confirmation.ppm"
