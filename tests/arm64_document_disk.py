@@ -1,5 +1,4 @@
 """Verify ordinary shutdown and abrupt power loss using the packaged ARM64 launcher."""
-from functools import partial
 import hashlib
 import json
 import secrets
@@ -13,44 +12,8 @@ def revision(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def wait(vm, log, prefix):
-    for raw in vm.stdout:
-        log.write(raw)
-        line = raw.decode(errors="replace").strip()
-        if line.startswith(prefix):
-            return line
-        if "Kernel panic" in line:
-            raise RuntimeError(line)
-    raise RuntimeError(f"Guest stopped before {prefix}")
-
-
-def command(vm, log, request, prefix):
-    vm.stdin.write(request.encode() + b"\n")
-    vm.stdin.flush()
-    return wait(vm, log, prefix)
-
-
-def console_tool(vm, log, observations, name, document, revision, line=None, index=None):
-    if name == "read_text" and document == "note.txt":
-        reply = command(vm, log, f"read {revision} 0 512", "AIOS_")
-        if not reply.startswith("AIOS_PAGE "):
-            raise ValueError(reply)
-        page = json.loads(reply.removeprefix("AIOS_PAGE "))
-        if page["next_byte"] is None:
-            observations[revision] = page["text"].split("\n")
-        return page
-    if name == "append_observed_line":
-        lines = observations.get(revision, [])
-        if type(index) is not int or not -len(lines) <= index < len(lines):
-            raise ValueError("Read the complete document first and select an existing line index")
-        name, line = "append_line", lines[index]
-    if (name != "append_line" or document != "note.txt" or not line.isprintable()
-            or len(line.encode()) > 3900):
-        raise ValueError("Expected a single printable console line")
-    response = command(vm, log, f"append {revision} {line}", "AIOS_")
-    if not response.startswith("AIOS_SAVED revision="):
-        raise ValueError(response)
-    return {"revision": response.removeprefix("AIOS_SAVED revision=")}
+sys.path.insert(0, str(Path(sys.argv[1]).resolve().parent))
+from arm64_model import command, edit, wait
 
 
 original = "작업 기록"
@@ -83,15 +46,8 @@ for boot, expected in enumerate((original, saved, durable), 1):
                 if model_port is None:
                     result = command(vm, log, f"append {revision(original)} {addition}", "AIOS_SAVED ")
                 else:
-                    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-                    from model_mvp import run_model
-
                     instruction = f"문서 마지막에 '{addition}' 한 줄을 추가해 줘."
-                    catalog = [{"name": "append_line", "inputSchema": {"properties": {"line": {"type": "string"}}}}]
-                    catalog.append({"name": "read_text", "inputSchema": {"properties": {}}})
-                    catalog.append({"name": "append_observed_line", "inputSchema": {"properties": {"index": {"type": "integer"}}}})
-                    state = {"document": "note.txt", "revision": result.split()[1].split("=")[1]}
-                    published, trace = run_model(model_port, instruction, catalog, partial(console_tool, vm, log, {}), state)
+                    published, trace = edit(vm, log, model_port, instruction, observed)
                     result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(saved)}", result
                 command(vm, log, f"read {observed} 0 3", "AIOS_REJECT invalid-read")
@@ -101,8 +57,7 @@ for boot, expected in enumerate((original, saved, durable), 1):
                     result = command(vm, log, f"append {revision(saved)} 전원 중단 검증", "AIOS_SAVED ")
                 else:
                     followup = "read_text 도구로 현재 본문을 먼저 읽어 줘. 그런 다음 마지막 줄을 그대로 한 줄 더 추가해 줘."
-                    state = {"document": "note.txt", "revision": observed}
-                    published, followup_trace = run_model(model_port, followup, catalog, partial(console_tool, vm, log, {}), state)
+                    published, followup_trace = edit(vm, log, model_port, followup, observed)
                     successful = [step["mcp_call"]["name"] for step in followup_trace if "mcp_result" in step]
                     assert successful in (["read_text", "append_line"], ["read_text", "append_observed_line"]), followup_trace
                     result = "AIOS_SAVED revision=" + published["revision"]

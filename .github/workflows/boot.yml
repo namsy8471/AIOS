@@ -45,6 +45,14 @@ jobs:
           cp build/arm64-console/starter.raw build/work.raw
           bash scripts/with-local-model.sh timeout 240s python3 tests/arm64_document_disk.py build/arm64-console/arm64-console.sh build/work.raw 18080
           cat build/arm64-model-proof.json
+      - name: Edit through the downloadable command and reopen the disk
+        run: |
+          cd build/arm64-console
+          cp starter.raw cli.raw
+          bash ../../scripts/with-local-model.sh timeout 180s python3 arm64_model.py cli.raw --instruction "문서 마지막에 '현장 확인' 한 줄을 추가해 줘." > saved.json
+          timeout 60s python3 arm64_model.py cli.raw --show > reopened.json
+          cmp saved.json reopened.json
+          jq -e '.text == "작업 기록\n현장 확인"' reopened.json
       - uses: actions/upload-artifact@v4
         with:
           name: aios-arm64-model-proof
