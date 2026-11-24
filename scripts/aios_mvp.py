@@ -25,6 +25,7 @@ def boot(qemu, iso, disk, console, usb_uefi=None):
             endpoint.settimeout(5)
         port = listener.getsockname()[1]
         console_port = console_listener.getsockname()[1]
+        console_path = str(console).replace(",", ",,")
         accelerator = "kvm:tcg" if sys.platform.startswith("linux") else "tcg"
         machine = f"accel={accelerator}"
         media = ["-boot", "d", "-cdrom", str(iso)]
@@ -40,18 +41,17 @@ def boot(qemu, iso, disk, console, usb_uefi=None):
                "-display", "none", "-nic", "none", "-monitor", "none", "-no-reboot",
                *media, "-drive",
                f"file={str(disk).replace(',', ',,')},if=virtio,format=raw",
-               "-chardev", f"socket,id=console,host=127.0.0.1,port={console_port}", "-serial", "chardev:console",
+               "-chardev", f"socket,id=console,host=127.0.0.1,port={console_port},logfile={console_path}",
+               "-serial", "chardev:console",
                "-chardev", f"socket,id=mcp,host=127.0.0.1,port={port}", "-serial", "chardev:mcp"]
         with console.with_suffix(".qemu.log").open("wb") as qemu_log, subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=qemu_log, stderr=subprocess.STDOUT) as vm:
             ready = threading.Event()
             def capture():
-                with console.open("wb") as log, console_channel.makefile("rb") as stream:
+                with console_channel.makefile("rb") as stream:
                     try:
                         for data in stream:
-                            log.write(data)
                             if b"AIOS_RUNTIME_READY transport=serial" in data:
-                                log.flush()
                                 ready.set()
                     except ConnectionResetError:
                         # QEMU can reset the socket on exit. The caller checks the shutdown marker.
