@@ -79,7 +79,7 @@ function Get-State {
         foreach ($w in $windows) {
             $pattern = $null
             if ($w.TryGetCurrentPattern([Windows.Automation.WindowPattern]::Pattern, [ref]$pattern) -and $pattern.Current.IsModal -and $w.Current.Name -ne 'AIOS test editor') {
-                return @{ State = 'modal' }
+                return @{ State = 'dialog' }
             }
         }
     }
@@ -155,7 +155,7 @@ try {
             (Get-Pattern $main 'Save' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
         } elseif ($line -eq 'inject-modal') {
             (Get-Pattern $main 'Open modal' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
-            Wait-State modal
+            Wait-State dialog
             [Console]::WriteLine('injected')
             continue
         } else { throw "Unknown command" }

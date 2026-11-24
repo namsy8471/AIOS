@@ -35,7 +35,7 @@ fn exercise(toolkit: &str, mut adapter: Command) {
         assert_eq!(fs::read(&file).unwrap(), expected);
         action("append 저장되면 안 됨", "ok");
         action("inject-modal", "injected");
-        action("save", "blocked-modal");
+        action("save", "blocked-dialog");
     }));
     drop(input);
     let status = child.wait().unwrap();

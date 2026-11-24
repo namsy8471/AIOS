@@ -32,9 +32,12 @@ def snapshot(pid):
         if app.get_process_id() != pid:
             continue
         windows = list(children(app))
-        if any(w.get_state_set().contains(Atspi.StateType.MODAL)
-               and w.get_state_set().contains(Atspi.StateType.SHOWING) for w in windows):
-            return "modal", None
+        for window in windows:
+            state = window.get_state_set()
+            visible = state.contains(Atspi.StateType.SHOWING) or state.contains(Atspi.StateType.VISIBLE)
+            dialog = window.get_role() in (Atspi.Role.DIALOG, Atspi.Role.ALERT)
+            if visible and (dialog or state.contains(Atspi.StateType.MODAL)):
+                return "dialog", None
         for window in windows:
             if window.get_name() == "AIOS test editor":
                 return "ready", window
@@ -64,7 +67,7 @@ def control(window, name, interface):
 def command(editor, line):
     if line == "inject-modal":
         editor.send_signal(signal.SIGUSR1)
-        wait(editor, "modal")
+        wait(editor, "dialog")
         return "injected"
     state, window = snapshot(editor.pid)
     if state != "ready":
