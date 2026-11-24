@@ -45,9 +45,12 @@ def verify(binary, mount):
     for decision, status, expected in [("cancel", 23, original),
                                        ("commit", 0, "시작\n검토 완료".encode())]:
         with tempfile.TemporaryDirectory() as runtime:
+            # Keep Xauthority under this context's cleanup after the namespace exits.
+            authority = Path(runtime) / "Xauthority"
+            authority.touch(mode=0o600)
             result = subprocess.run(
                 [binary, "workspace-run", work, "--", "dbus-run-session", "--",
-                 "xvfb-run", "-a", sys.executable, tools / "gtk_recovery.py", decision],
+                 "xvfb-run", "-a", "-f", authority, sys.executable, tools / "gtk_recovery.py", decision],
                 env={**os.environ, "XDG_RUNTIME_DIR": runtime, "HOME": runtime,
                      "TMPDIR": runtime, "GSETTINGS_BACKEND": "memory"},
                 timeout=45)
