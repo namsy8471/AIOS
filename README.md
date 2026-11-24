@@ -78,6 +78,18 @@ python3 arm64_model.py work.raw --show
 
 `python3 arm64_model.py work.raw --interactive`로 실행하면 같은 ARM64 게스트에서 지시를 이어갈 수 있습니다. 매번 저장한 본문을 다시 읽어 해시를 확인하고 결과를 한 줄의 JSON으로 출력합니다. 빈 줄을 입력하거나 입력을 닫으면 게스트가 종료됩니다.
 
+### 플립4 커널로 가상 메모장 실행
+
+GitHub Actions의 **Flip4 reference kernel probe** 실행에서 `flip4-virtual-disk`를 받아 압축을 풉니다. 묶음에는 플립4 커뮤니티 커널, ext4 디스크, Python 실행기가 들어 있습니다. Linux에서 Python 3과 `qemu-system-aarch64`를 설치한 뒤 묶음 폴더에서 실행합니다.
+
+```sh
+sha256sum -c SHA256SUMS
+cp starter.raw work.raw
+python3 flip4_model.py work.raw --show
+```
+
+첫 실행은 저장된 ‘장보기’ 메모를 출력합니다. 호스트에서 프로젝트의 로컬 모델 서버가 18080 포트로 실행 중이면 `python3 flip4_model.py work.raw --instruction "메모 끝에 '우유' 한 줄을 추가해 줘."`로 편집합니다. 같은 디스크에 `--show`를 다시 실행하면 새로 부팅한 게스트가 저장된 본문을 읽습니다.
+
 ### x86_64 부팅 데모
 
 QEMU가 Linux 커널을 부팅하면 커널이 initramfs의 `/init`을 PID 1로 실행합니다. 이 Rust 프로그램은 임시 디렉터리에 문서를 저장하고, 모달이 열리거나 관측 시점의 문서 버전이 오래되면 후속 저장을 중단합니다. 마지막으로 파일 내용을 다시 읽어 최초 저장본이 유지됐는지 확인하고 VM을 종료합니다. 편집기 상태는 메모리에서 모사합니다.

@@ -93,7 +93,7 @@ def requests(args):
         yield line.strip()
 
 
-def main():
+def main(launch=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("disk", type=Path, help="writable working copy of starter.raw")
     action = parser.add_mutually_exclusive_group(required=True)
@@ -108,7 +108,8 @@ def main():
     if args.instruction is not None and not args.instruction.strip():
         parser.error("empty instruction")
 
-    with subprocess.Popen(["bash", launcher, args.disk], stdin=subprocess.PIPE,
+    vm_args = launch(args.disk) if launch else ["bash", launcher, args.disk]
+    with subprocess.Popen(vm_args, stdin=subprocess.PIPE,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:
             log = None

@@ -20,7 +20,10 @@ jobs:
             cargo build --locked --release --target aarch64-unknown-linux-musl
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/document document
-            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/disk disk
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/bundle disk
+            cp build/flip4/kernel scripts/flip4_model.py scripts/arm64_model.py scripts/model_mvp.py build/flip4/bundle/
+            cd build/flip4/bundle
+            sha256sum kernel starter.raw *.py > SHA256SUMS
           '
       - uses: actions/upload-artifact@v4
         if: always()
@@ -30,9 +33,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-virtual-disk
-          path: |
-            build/flip4/kernel
-            build/flip4/disk/starter.raw
+          path: build/flip4/bundle/
   model:
     needs: probe
     runs-on: ubuntu-24.04
@@ -44,7 +45,18 @@ jobs:
           name: flip4-virtual-disk
           path: build/flip4
       - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs
-      - run: bash scripts/with-local-model.sh timeout 180s python3 tests/flip4_disk.py build/flip4/kernel build/flip4/disk/starter.raw build/flip4
+      - run: |
+          cd build/flip4
+          sha256sum -c SHA256SUMS
+          cp starter.raw work.raw
+          bash ../../scripts/with-local-model.sh bash -eu <<'CHECK'
+          timeout 180s python3 ../../tests/flip4_disk.py . work.raw .
+          timeout 180s python3 flip4_model.py work.raw --instruction "메모 끝에 '빵' 한 줄을 추가해 줘." > edited.json
+          timeout 60s python3 flip4_model.py work.raw --show > reopened.json
+          cmp edited.json reopened.json
+          jq -e '.text == "장보기\n우유\n빵"' reopened.json
+          sha256sum -c SHA256SUMS
+          CHECK
       - uses: actions/upload-artifact@v4
         if: always()
         with:

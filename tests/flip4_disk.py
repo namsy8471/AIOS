@@ -5,19 +5,13 @@ from pathlib import Path
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+bundle, disk, output = map(Path, sys.argv[1:4])
+sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, edit, read_document, wait
+from flip4_model import launch
 
 
-kernel, disk, output = map(Path, sys.argv[1:4])
-args = [
-    "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max",
-    "-m", "1024M", "-nic", "none", "-display", "none", "-monitor", "none",
-    "-serial", "stdio", "-no-reboot", "-kernel", str(kernel),
-    "-device", "qemu-xhci,id=xhci", "-drive", f"file={disk},if=none,id=docs,format=raw",
-    "-device", "usb-storage,bus=xhci.0,drive=docs",
-    "-append", "earlycon=pl011,0x9000000 console=ttyAMA0 root=/dev/sda rootfstype=ext4 rootwait rw init=/init panic=1",
-]
+args = launch(disk)
 expected = "장보기\n우유"
 revision = hashlib.sha256(expected.encode()).hexdigest()
 instruction = "장보기 메모 마지막에 '우유' 한 줄을 추가해 줘."
