@@ -4,8 +4,15 @@ import asyncio
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from document import append_bytes, digest, read_document
+
+
+class DocumentRevision(BaseModel):
+    document: str
+    bytes: int
+    revision: str
 
 
 def create_server(binary, workspace, filename):
@@ -20,13 +27,13 @@ def create_server(binary, workspace, filename):
     mcp = FastMCP("AIOS documents", instructions=f"This session can edit only {filename!r}.")
 
     @mcp.tool()
-    def inspect_document() -> dict:
+    def inspect_document() -> DocumentRevision:
         """Return the authorized filename, UTF-8 byte count and current SHA-256 revision."""
         data = read_document(document_path)
-        return {"document": filename, "bytes": len(data), "revision": digest(data)}
+        return DocumentRevision(document=filename, bytes=len(data), revision=digest(data))
 
     @mcp.tool()
-    async def append_line(document: str, revision: str, line: str) -> dict:
+    async def append_line(document: str, revision: str, line: str) -> DocumentRevision:
         """Append a line through GTK. Supply the document and revision from inspect_document."""
         if document != filename:
             raise ValueError("Document is outside this session's grant")
@@ -51,7 +58,7 @@ def create_server(binary, workspace, filename):
             raise ValueError("Document revision changed before editing; inspect again")
         if code != 0:
             raise RuntimeError("Session failed; inspect the document revision before retrying")
-        return {"document": filename, "bytes": len(expected), "revision": digest(expected)}
+        return DocumentRevision(document=filename, bytes=len(expected), revision=digest(expected))
 
     return mcp
 
