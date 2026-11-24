@@ -11,12 +11,17 @@ strip "$root/init"
 touch "$root/aios-boot-probe"
 mknod -m 600 "$root/dev/kmsg" c 1 11
 mknod -m 600 "$root/dev/console" c 5 1
-if [[ ${3:-} == document ]]; then
+if [[ ${3:-} == document || ${3:-} == disk ]]; then
   mkdir "$root/etc" "$root/work"
   touch "$root/etc/aios-document-console" "$root/etc/aios-stream-worker"
   printf '장보기' > "$root/work/note.txt"
   printf 'private' > "$root/work/sibling.txt"
   mknod -m 666 "$root/dev/null" c 1 3
+fi
+if [[ ${3:-} == disk ]]; then
+  truncate -s 48M "$out/starter.raw"
+  mkfs.ext4 -q -F -d "$root" "$out/starter.raw"
+  exit
 fi
 (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/early-init.cpio.gz"
 vm=(qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1024M -nic none \

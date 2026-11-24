@@ -16,13 +16,39 @@ jobs:
       - name: Attempt a diskless boot on QEMU virt
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64
+            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64 e2fsprogs
             cargo build --locked --release --target aarch64-unknown-linux-musl
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/document document
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/disk disk
           '
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: flip4-reference-probe-log
           path: build/flip4/*/console.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-virtual-disk
+          path: |
+            build/flip4/kernel
+            build/flip4/disk/starter.raw
+  model:
+    needs: probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-virtual-disk
+          path: build/flip4
+      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs
+      - run: bash scripts/with-local-model.sh timeout 180s python3 tests/flip4_disk.py build/flip4/kernel build/flip4/disk/starter.raw build/flip4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flip4-model-result
+          path: |
+            build/flip4/proof.json
+            build/flip4/disk-*.log
