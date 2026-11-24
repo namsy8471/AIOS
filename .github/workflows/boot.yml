@@ -52,6 +52,12 @@ jobs:
           timeout 60s python3 arm64_model.py cli.raw --show > reopened.json
           cmp saved.json reopened.json
           jq -e '.text == "작업 기록\n현장 확인"' reopened.json
+          printf '%s\n' "끝에 '승인 요청' 한 줄을 추가해 줘." "끝에 '승인 완료' 한 줄을 추가해 줘." "" \
+            | timeout 180s python3 arm64_model.py cli.raw --interactive > turns.jsonl
+          jq -se 'length == 2 and .[0].text == "작업 기록\n현장 확인\n승인 요청" and
+            .[1].text == (.[0].text + "\n승인 완료")' turns.jsonl
+          timeout 60s python3 arm64_model.py cli.raw --show > reopened.json
+          tail -1 turns.jsonl | cmp - reopened.json
           CHECK
       - uses: actions/upload-artifact@v4
         with:

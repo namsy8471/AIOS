@@ -62,11 +62,43 @@ def edit(vm, log, port, instruction, revision):
     return run_model(port, instruction, catalog, partial(console_tool, vm, log, {}), state)
 
 
+def read_document(vm, revision):
+    chunks = []
+    offset = 0
+    while offset is not None:
+        response = command(vm, None, f"read {revision} {offset} 512", "AIOS_")
+        if not response.startswith("AIOS_PAGE "):
+            raise RuntimeError(response)
+        page = json.loads(response.removeprefix("AIOS_PAGE "))
+        if page["revision"] != revision or (page["next_byte"] is not None and
+                (not page["text"] or page["next_byte"] != offset + len(page["text"].encode()))):
+            raise RuntimeError("Invalid document page")
+        chunks.append(page["text"])
+        offset = page["next_byte"]
+    text = "".join(chunks)
+    if hashlib.sha256(text.encode()).hexdigest() != revision:
+        raise RuntimeError("Readback differs from the guest revision")
+    return {"revision": revision, "text": text}
+
+
+def requests(args):
+    if not args.interactive:
+        yield args.instruction
+        return
+    if sys.stdin.isatty():
+        print("한 줄씩 지시를 입력하세요. 빈 줄로 종료합니다.", file=sys.stderr)
+    for line in sys.stdin:
+        if not line.strip():
+            return
+        yield line.strip()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("disk", type=Path, help="writable working copy of starter.raw")
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--instruction", help="request a single document edit")
+    action.add_argument("--interactive", action="store_true", help="edit repeatedly until a blank line or EOF")
     action.add_argument("--show", action="store_true", help="print the persisted document")
     parser.add_argument("--model-port", type=int, default=18080)
     args = parser.parse_args()
@@ -81,31 +113,21 @@ def main():
         try:
             log = None
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
-            info = command(vm, log, "inspect", "AIOS_DOCUMENT ")
-            revision = info.split()[1].split("=")[1]
-            if args.instruction is not None:
-                saved, _ = edit(vm, log, args.model_port, args.instruction, revision)
-                revision = saved["revision"]
-            chunks = []
-            offset = 0
-            while offset is not None:
-                response = command(vm, log, f"read {revision} {offset} 512", "AIOS_")
-                if not response.startswith("AIOS_PAGE "):
-                    raise RuntimeError(response)
-                page = json.loads(response.removeprefix("AIOS_PAGE "))
-                if page["revision"] != revision or (page["next_byte"] is not None and
-                        (not page["text"] or page["next_byte"] != offset + len(page["text"].encode()))):
-                    raise RuntimeError("Invalid document page")
-                chunks.append(page["text"])
-                offset = page["next_byte"]
-            text = "".join(chunks)
-            if hashlib.sha256(text.encode()).hexdigest() != revision:
-                raise RuntimeError("Readback differs from the guest revision")
+            for instruction in requests(args):
+                info = command(vm, log, "inspect", "AIOS_DOCUMENT ")
+                revision = info.split()[1].split("=")[1]
+                if instruction is not None:
+                    saved, _ = edit(vm, log, args.model_port, instruction, revision)
+                    revision = saved["revision"]
+                result = read_document(vm, revision)
+                if args.interactive:
+                    print(json.dumps(result, ensure_ascii=False), flush=True)
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
             if vm.wait(timeout=30) != 0:
                 raise RuntimeError("Guest shutdown failed")
-            print(json.dumps({"revision": revision, "text": text}, ensure_ascii=False))
+            if not args.interactive:
+                print(json.dumps(result, ensure_ascii=False))
         finally:
             if vm.poll() is None:
                 vm.kill()
