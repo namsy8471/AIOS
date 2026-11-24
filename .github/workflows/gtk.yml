@@ -60,3 +60,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo test --locked --test editor_task -- --ignored --nocapture
+      - name: Measure WPF and WinForms text observation
+        shell: powershell
+        run: |
+          foreach ($toolkit in 'wpf', 'winforms') {
+            $document = Join-Path $env:RUNNER_TEMP "$toolkit-clock.txt"
+            $report = Join-Path $env:RUNNER_TEMP "$toolkit-latency.json"
+            [IO.File]::WriteAllText($document, 'seed')
+            & ./tests/windows_editor.ps1 -Document $document -Toolkit $toolkit -LatencyReport $report
+            Get-Content $report -Raw | ConvertFrom-Json | Select-Object toolkit,count,p95_ms,max_ms
+          }
+      - name: Publish Windows accessibility latency samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-text-observation-latency
+          path: ${{ runner.temp }}/*-latency.json
+          if-no-files-found: error

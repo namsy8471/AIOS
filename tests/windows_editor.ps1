@@ -1,10 +1,40 @@
 param([Parameter(Mandatory)][string]$Document,
-      [ValidateSet('wpf','winforms')][string]$Toolkit = 'wpf', [switch]$Editor)
+      [ValidateSet('wpf','winforms')][string]$Toolkit = 'wpf', [switch]$Editor,
+      [switch]$Clock, [string]$LatencyReport)
 
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName PresentationFramework, UIAutomationClient, UIAutomationTypes
+
+function Start-EditorClock {
+    $script:sequence = 0
+    $script:changes = [Collections.Generic.List[long]]::new()
+    $script:nextChange = [Threading.EventWaitHandle]::new(
+        $false, [Threading.EventResetMode]::AutoReset, "Local\AIOS-clock-$PID")
+    $body.Add_TextChanged({
+        $changed = [Diagnostics.Stopwatch]::GetTimestamp()
+        $script:changes.Add($changed)
+        if ($script:changes.Count -eq 100) {
+            [IO.File]::WriteAllLines("$Document.clock.tmp", [string[]]$script:changes)
+            [IO.File]::Move("$Document.clock.tmp", "$Document.clock")
+        }
+    })
+    if ($Toolkit -eq 'wpf') {
+        $script:clockTimer = [Windows.Threading.DispatcherTimer]::new()
+        $script:clockTimer.Interval = [TimeSpan]::FromMilliseconds(10)
+    } else {
+        $script:clockTimer = [Windows.Forms.Timer]::new()
+        $script:clockTimer.Interval = 10
+    }
+    $script:clockTimer.Add_Tick({
+        if ($script:nextChange.WaitOne(0)) {
+            $script:sequence++
+            $body.Text = "$([char]0xAD00)$([char]0xCE21) $script:sequence"
+        }
+    })
+    $script:clockTimer.Start()
+}
 
 if ($Editor -and $Toolkit -eq 'winforms') {
     Add-Type -AssemblyName System.Windows.Forms
@@ -32,6 +62,7 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     $layout.Dock = 'Fill'
     foreach ($item in $body, $save, $inject) { $layout.Controls.Add($item) }
     $form.Controls.Add($layout)
+    if ($Clock) { Start-EditorClock }
     $form.Show()
     $form.Activate()
     [Windows.Forms.Application]::Run($form)
@@ -61,6 +92,7 @@ if ($Editor) {
     $panel = [Windows.Controls.StackPanel]::new()
     foreach ($item in $body, $save, $inject) { [void]$panel.Children.Add($item) }
     $window.Content = $panel
+    if ($Clock) { Start-EditorClock }
     [void]$window.ShowDialog()
     exit
 }
@@ -109,48 +141,54 @@ function Get-Pattern($window, $name, $pattern) {
     $matchesFound[0]
 }
 
-if ($Toolkit -eq 'winforms') {
-    Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using Accessibility;
-public static class NativeEditorText {
-    [DllImport("oleacc.dll")]
-    private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint objectId,
-        ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IAccessible result);
-    public static void Append(int hwnd, string line) {
-        var iid = typeof(IAccessible).GUID;
-        IAccessible text;
-        Marshal.ThrowExceptionForHR(AccessibleObjectFromWindow(new IntPtr(hwnd), 0xfffffffc, ref iid, out text));
-        try {
-            text.set_accValue(0, text.get_accValue(0) + "\r\n" + line);
-        } finally { Marshal.ReleaseComObject(text); }
-    }
-}
-'@
-}
+. (Join-Path $PSScriptRoot '../runtime/windows_text.ps1')
+$clockOption = if ($LatencyReport) { '-Clock' } else { '' }
 
-$child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Toolkit $Toolkit -Editor"
+$child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Toolkit $Toolkit -Editor $clockOption"
 try {
     Wait-State ready
+    if ($LatencyReport) {
+        $control = Get-DocumentControl (Get-State).Window $Toolkit
+        $trigger = [Threading.EventWaitHandle]::OpenExisting("Local\AIOS-clock-$($child.Id)")
+        $observed = try {
+            foreach ($index in 1..100) {
+                [void]$trigger.Set()
+                Wait-DocumentValue $control "$([char]0xAD00)$([char]0xCE21) $index"
+            }
+        } finally { $trigger.Dispose() }
+        $limit = [Diagnostics.Stopwatch]::StartNew()
+        while (!(Test-Path -LiteralPath "$Document.clock") -and $limit.Elapsed.TotalSeconds -lt 5) {
+            [Threading.Thread]::Sleep(5)
+        }
+        $changed = [long[]][IO.File]::ReadAllLines("$Document.clock")
+        if ($changed.Count -ne $observed.Count) { throw 'Unpaired observations' }
+        $frequency = [Diagnostics.Stopwatch]::Frequency
+        $samples = for ($i = 0; $i -lt $observed.Count; $i++) {
+            $elapsed = $observed[$i] - $changed[$i]
+            if ($elapsed -lt 0) { throw 'Observation preceded its source' }
+            [ordered]@{ index = $i + 1; changed_ticks = $changed[$i]; observed_ticks = $observed[$i];
+                latency_ms = $elapsed * 1000.0 / $frequency }
+        }
+        $times = @($samples | ForEach-Object { $_.latency_ms } | Sort-Object)
+        $report = [ordered]@{ toolkit = $Toolkit; frequency = $frequency; count = $samples.Count;
+            p95_ms = $times[94]; max_ms = $times[-1]; samples = $samples }
+        [IO.File]::WriteAllText($LatencyReport, ($report | ConvertTo-Json -Depth 4))
+        return
+    }
     [Console]::WriteLine('ready')
     while ($null -ne ($line = [Console]::ReadLine())) {
         $observation = Get-State
         if ($observation.State -ne 'ready') { [Console]::WriteLine("blocked-$($observation.State)"); continue }
         $main = $observation.Window
         if ($line.StartsWith('append ')) {
+            $control = Get-DocumentControl $main $Toolkit
+            $expected = (Read-DocumentValue $control) + "`r`n" + $line.Substring(7)
             if ($Toolkit -eq 'winforms') {
-                $all = $main.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
-                $fields = @($all | Where-Object { $_.Current.ClassName -match 'EDIT' -and $_.Current.NativeWindowHandle -ne 0 })
-                if ($fields.Count -ne 1) {
-                    $tree = @($all | ForEach-Object { "$($_.Current.Name) [$($_.Current.ClassName)]" }) -join ', '
-                    throw "Missing or ambiguous native edit control: $tree"
-                }
-                [NativeEditorText]::Append($fields[0].Current.NativeWindowHandle, $line.Substring(7))
+                [NativeEditorText]::Write($control.Handle, $expected)
             } else {
-                $value = Get-Pattern $main 'Document' ([Windows.Automation.ValuePattern]::Pattern)
-                $value.SetValue($value.Current.Value + "`r`n" + $line.Substring(7))
+                $control.Pattern.SetValue($expected)
             }
+            [void](Wait-DocumentValue $control $expected)
         } elseif ($line -eq 'save') {
             (Get-Pattern $main 'Save' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
         } elseif ($line -eq 'inject-modal') {
