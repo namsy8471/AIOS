@@ -1,5 +1,6 @@
 """Let a local model select MCP document tools using only its own observations."""
 import json
+import sys
 from urllib.request import Request, urlopen
 
 
@@ -10,7 +11,7 @@ def run_model(port, instruction, catalog, tool):
                    for t in allowed.values()]
     system = ("You operate one AIOS document. Reply only with one JSON object containing tool "
               "and arguments. Use only available tools. Use returned document and revision values "
-              "exactly. If you do not know the current revision, discover it. Do not invent "
+              "exactly. This is a non-interactive test: omit review, use the default direct edit. If you do not know the current revision, discover it. Do not invent "
               "arguments. Keep Korean text exactly as requested. Tool definitions: "
               + json.dumps(definitions, ensure_ascii=False))
     messages = [dict(role="system", content=system), dict(role="user", content=instruction)]
@@ -24,6 +25,7 @@ def run_model(port, instruction, catalog, tool):
         with urlopen(request, timeout=120) as response:
             completion = json.load(response)
         raw = completion["choices"][0]["message"]["content"]
+        print("Local model:", raw, file=sys.stderr, flush=True)
         messages.append(dict(role="assistant", content=raw))
         step = {"model": completion["model"], "reply": raw}
         trace.append(step)
@@ -34,6 +36,8 @@ def run_model(port, instruction, catalog, tool):
             if name not in allowed or not isinstance(args, dict):
                 raise ValueError("Unknown tool or invalid arguments")
             # Short references keep the model from having to transcribe 64 hex digits.
+            if args.get("review"):
+                raise ValueError("Interactive review is unavailable in this test; omit review")
             if "revision" in args:
                 args["revision"] = revisions[args["revision"]]
             if name in {"append_line", "replace_text"} and not revisions:
@@ -51,7 +55,7 @@ def run_model(port, instruction, catalog, tool):
             if name in {"append_line", "replace_text"}:
                 return result, trace
             feedback = json.dumps(view, ensure_ascii=False)
-        except (ValueError, KeyError, AttributeError, RuntimeError) as error:
+        except (ValueError, KeyError, AttributeError, TypeError, RuntimeError) as error:
             feedback = f"Tool error: {error}"
             step["error"] = feedback
         messages.append(dict(role="user", content="AIOS tool result: " + feedback))

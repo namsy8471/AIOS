@@ -24,6 +24,10 @@ for _ in {1..90}; do
   if ! kill -0 "$server_pid" 2>/dev/null; then cat "$stage/model.log"; exit 1; fi
   sleep 1
 done
-python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/proof"
+if ! python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/proof"; then
+  tail -40 "$stage/model.log" >&2
+  tail -40 "$stage/proof/first-boot.log" >&2
+  exit 1
+fi
 cp "$stage/proof/proof.json" build/runtime/model-proof.json
 cat build/runtime/model-proof.json

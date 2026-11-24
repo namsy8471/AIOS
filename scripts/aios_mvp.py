@@ -56,6 +56,17 @@ def boot(qemu, iso, disk, console):
                             channel.sendall(json.dumps(message).encode() + b"\n")
                             while True:
                                 response = json.loads(stream.readline())
+                                if "method" in response:
+                                    if "id" in response:
+                                        answer = dict(jsonrpc="2.0", id=response["id"])
+                                        if response["method"] == "elicitation/create":
+                                            answer["result"] = {"action": "cancel"}
+                                        elif response["method"] == "ping":
+                                            answer["result"] = {}
+                                        else:
+                                            answer["error"] = {"code": -32601, "message": "Unsupported client method"}
+                                        channel.sendall(json.dumps(answer).encode() + b"\n")
+                                    continue
                                 if response.get("id") == sequence:
                                     if "error" in response:
                                         raise RuntimeError(response["error"])
