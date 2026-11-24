@@ -25,7 +25,22 @@ def wait(vm, log, prefix):
 
 
 def command(vm, log, request, prefix):
-    vm.stdin.write(request.encode() + b"\n")
+    encoded = request.encode()
+    if sys.platform == "win32":
+        # The Windows stdio backend can overrun the emulated PL011 RX FIFO.
+        # Wait for the guest terminal echo before submitting each next chunk.
+        for offset in range(0, len(encoded), 8):
+            chunk = encoded[offset:offset + 8]
+            vm.stdin.write(chunk)
+            vm.stdin.flush()
+            echo = vm.stdout.read(len(chunk))
+            if log is not None:
+                log.write(echo)
+            if echo != chunk:
+                raise RuntimeError("Guest serial echo differs from the command")
+    else:
+        vm.stdin.write(encoded)
+    vm.stdin.write(b"\n")
     vm.stdin.flush()
     return wait(vm, log, prefix)
 
