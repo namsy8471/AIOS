@@ -1,4 +1,5 @@
 """Verify ordinary shutdown and abrupt power loss using the packaged ARM64 launcher."""
+from functools import partial
 import hashlib
 import json
 import secrets
@@ -29,11 +30,26 @@ def command(vm, log, request, prefix):
     return wait(vm, log, prefix)
 
 
+def console_tool(vm, log, name, document, revision, line=None):
+    if name == "read_text" and document == "note.txt":
+        reply = command(vm, log, f"read {revision} 0 512", "AIOS_")
+        if not reply.startswith("AIOS_PAGE "):
+            raise ValueError(reply)
+        return json.loads(reply.removeprefix("AIOS_PAGE "))
+    if (name != "append_line" or document != "note.txt" or not line.isprintable()
+            or len(line.encode()) > 3900):
+        raise ValueError("Expected a single printable console line")
+    response = command(vm, log, f"append {revision} {line}", "AIOS_")
+    if not response.startswith("AIOS_SAVED revision="):
+        raise ValueError(response)
+    return {"revision": response.removeprefix("AIOS_SAVED revision=")}
+
+
 original = "작업 기록"
 model_port = int(sys.argv[3]) if len(sys.argv) > 3 else None
 addition = "재부팅 검증" if model_port is None else f"검토 완료 {1000 + secrets.randbelow(9000)}"
 saved = original + "\n" + addition
-durable = saved + "\n전원 중단 검증"
+durable = saved + "\n" + (addition if model_port is not None else "전원 중단 검증")
 for boot, expected in enumerate((original, saved, durable), 1):
     with Path(f"build/arm64-disk-{boot}.log").open("wb") as log, subprocess.Popen([
         "bash", sys.argv[1], sys.argv[2],
@@ -62,31 +78,25 @@ for boot, expected in enumerate((original, saved, durable), 1):
                     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
                     from model_mvp import run_model
 
-                    def tool(name, document, revision, line=None):
-                        if name == "read_text" and document == "note.txt":
-                            reply = command(vm, log, f"read {revision} 0 512", "AIOS_")
-                            if not reply.startswith("AIOS_PAGE "):
-                                raise ValueError(reply)
-                            return json.loads(reply.removeprefix("AIOS_PAGE "))
-                        if (name != "append_line" or document != "note.txt" or not line.isprintable()
-                                or len(line.encode()) > 3900):
-                            raise ValueError("Expected a single printable console line")
-                        response = command(vm, log, f"append {revision} {line}", "AIOS_")
-                        if not response.startswith("AIOS_SAVED revision="):
-                            raise ValueError(response)
-                        return {"revision": response.removeprefix("AIOS_SAVED revision=")}
-
                     instruction = f"문서 마지막에 '{addition}' 한 줄을 추가해 줘."
                     catalog = [{"name": "append_line", "inputSchema": {"properties": {"line": {"type": "string"}}}}]
                     catalog.append({"name": "read_text", "inputSchema": {"properties": {}}})
                     state = {"document": "note.txt", "revision": result.split()[1].split("=")[1]}
-                    published, trace = run_model(model_port, instruction, catalog, tool, state)
+                    published, trace = run_model(model_port, instruction, catalog, partial(console_tool, vm, log), state)
                     result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(saved)}", result
                 command(vm, log, f"read {observed} 0 3", "AIOS_REJECT invalid-read")
                 command(vm, log, f"append {revision(original)} 중복", "AIOS_REJECT invalid-edit")
             if boot == 2:
-                result = command(vm, log, f"append {revision(saved)} 전원 중단 검증", "AIOS_SAVED ")
+                if model_port is None:
+                    result = command(vm, log, f"append {revision(saved)} 전원 중단 검증", "AIOS_SAVED ")
+                else:
+                    followup = "read_text 도구로 현재 본문을 먼저 읽어 줘. 그런 다음 마지막 줄을 그대로 한 줄 더 추가해 줘."
+                    state = {"document": "note.txt", "revision": observed}
+                    published, followup_trace = run_model(model_port, followup, catalog, partial(console_tool, vm, log), state)
+                    successful = [step["mcp_call"]["name"] for step in followup_trace if "mcp_result" in step]
+                    assert successful == ["read_text", "append_line"], followup_trace
+                    result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(durable)}", result
                 vm.kill()
                 assert vm.wait(timeout=20) == -signal.SIGKILL
@@ -108,5 +118,6 @@ if model_port is not None:
     assert disk_text == durable.encode()
     Path("build/arm64-model-proof.json").write_text(json.dumps({
         "instruction": instruction, "model_trace": trace, "after_reboot": saved,
+        "followup_instruction": followup, "followup_trace": followup_trace,
         "offline_after_power_loss": disk_text.decode(), "guest_ram_mib": 128,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
