@@ -93,7 +93,12 @@ def main():
                             Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
     os.environ["AT_SPI_BUS_ADDRESS"] = address
     Atspi.get_desktop(0)
+    # Let Qt discover GetAddress asynchronously after its accessibility bridge
+    # has subscribed to the D-Bus connection's enabled notification.
+    editor_env = os.environ.copy()
+    editor_env.pop("AT_SPI_BUS_ADDRESS")
     editor = subprocess.Popen([sys.executable, str(fixture), *sys.argv[1:]],
+                              env=editor_env,
                               stdin=subprocess.DEVNULL, stdout=sys.stderr)
     try:
         wait(editor, "ready")
