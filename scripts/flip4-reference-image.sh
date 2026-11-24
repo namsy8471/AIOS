@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # Assemble an unsigned reference image and boot its extracted payloads in QEMU.
 set -euo pipefail
-reference=${1:?Pass the community recovery image}
-probe=${2:?Pass the pstore probe output directory}
-out=${3:?Pass a new output directory}
-split=${4:?Pass the split-disk build output}
-bundle=${5:?Pass the reference kernel and test disk bundle}
+driver_only=false
+if [[ ${1:-} == --driver-image ]]; then
+  driver_only=true
+  reference=${2:?Pass the community recovery image}
+  document_ramdisk=${3:?Pass the extracted AIOS document ramdisk}
+  out=${4:?Pass a new output directory}
+else
+  reference=${1:?Pass the community recovery image}
+  probe=${2:?Pass the pstore probe output directory}
+  out=${3:?Pass a new output directory}
+  split=${4:?Pass the split-disk build output}
+  bundle=${5:?Pass the reference kernel and test disk bundle}
+  document_ramdisk="$split/document-init.cpio.gz"
+fi
 mkdir -p "$out"
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
@@ -32,6 +41,22 @@ assemble() {
   cmp "$ramdisk" "$extracted/ramdisk"
 }
 
+assemble_driver_image() {
+  local destination=$1 layout=$2
+  mkdir -p "$destination"
+  python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay
+  # The kernel unpacks both members into the same initramfs tree.
+  cat "$document_ramdisk" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
+  assemble "$stage/document-with-drivers.cpio.gz" "$destination/document-with-drivers.img" \
+    "$layout" "$destination/payload"
+  cp "$stage/module-overlay/order.txt" "$destination/order.txt"
+}
+
+if "$driver_only"; then
+  assemble_driver_image "$out" "$out/layout.json"
+  exit
+fi
+
 assemble "$probe/early-init.cpio.gz" "$out/aios-flip4-reference-unsigned.img" \
   "$out/layout.json" "$stage/diagnostic"
 
@@ -44,7 +69,7 @@ timeout 45s qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1024M -n
 tr -d '\r' < "$out/console.log" | grep -xE 'AIOS_PSTORE_WRITTEN|AIOS_PSTORE_RECOVERED' > "$stage/markers"
 printf '%s\n' AIOS_PSTORE_WRITTEN AIOS_PSTORE_RECOVERED | cmp - "$stage/markers"
 
-assemble "$split/document-init.cpio.gz" "$out/aios-flip4-document-reference-unsigned.img" \
+assemble "$document_ramdisk" "$out/aios-flip4-document-reference-unsigned.img" \
   "$out/document-layout.json" "$stage/document"
 cp "$bundle/split-starter.raw" "$stage/document-work.raw"
 if ! timeout 90s python3 tests/flip4_split_disk.py "$bundle" "$stage/document-work.raw" "$stage/document" \
@@ -55,15 +80,11 @@ fi
 cp "$stage/console-1.log" "$out/document-first-boot.log"
 cp "$stage/console-2.log" "$out/document-second-boot.log"
 
-python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay
-# The kernel unpacks both members into the same initramfs tree.
-cat "$split/document-init.cpio.gz" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
-assemble "$stage/document-with-drivers.cpio.gz" "$stage/document-with-drivers.img" \
-  "$out/document-driver-layout.json" "$stage/document-with-drivers"
+assemble_driver_image "$stage/document-with-drivers" "$out/document-driver-layout.json"
 mkdir "$stage/driver-test"
 cp "$bundle/split-starter.raw" "$stage/driver-test/work.raw"
 if ! timeout 120s python3 tests/flip4_split_disk.py "$bundle" "$stage/driver-test/work.raw" \
-  "$stage/document-with-drivers" --driver-order "$stage/module-overlay/order.txt" \
+  "$stage/document-with-drivers/payload" --driver-order "$stage/document-with-drivers/order.txt" \
   > "$out/document-driver-proof.json"; then
   tail -n 60 "$stage/driver-test"/console-*.log >&2
   exit 1
