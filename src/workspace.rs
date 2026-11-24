@@ -3,6 +3,7 @@ use rustix::fs::{CWD, RenameFlags, renameat_with};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
@@ -81,6 +82,14 @@ fn btrfs(operation: &str, paths: &[&Path]) -> io::Result<()> {
     Ok(())
 }
 
+fn flush_volume(volume: &File) -> io::Result<()> {
+    if unsafe { libc::syncfs(volume.as_raw_fd()) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 // The trusted broker owns this pipe. The sandboxed editor has null stdin/stdout.
 fn review(interrupted: &AtomicUsize) -> io::Result<u8> {
     let mut output = io::stdout().lock();
@@ -146,8 +155,29 @@ pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Resul
     }
     // Reserve the name by creating a directory exclusively. Never reuse staging
     // left by an interrupted process or let btrfs snapshot into an existing dir.
-    let staging = parent.join(format!(".aios-session-{}", std::process::id()));
+    let managed_guest = std::env::var_os("AIOS_MANAGED_GUEST").as_deref() == Some("1".as_ref());
+    let nonce = fs::read_to_string("/proc/sys/kernel/random/uuid")?;
+    let staging = parent.join(format!(".aios-session-{}", nonce.trim()));
     fs::create_dir(&staging)?;
+    if managed_guest {
+        // Only the privileged guest broker can mark a directory for boot recovery.
+        let directory = File::open(&staging)?;
+        let marker = b"v1";
+        if unsafe {
+            libc::fsetxattr(
+                directory.as_raw_fd(),
+                c"trusted.aios.transaction".as_ptr(),
+                marker.as_ptr().cast(),
+                marker.len(),
+                libc::XATTR_CREATE,
+            )
+        } != 0
+        {
+            let err = io::Error::last_os_error();
+            fs::remove_dir(&staging)?;
+            return Err(err);
+        }
+    }
     let branch = staging.join("documents");
     let start = Instant::now();
     if let Err(err) = btrfs("snapshot", &[&root, &branch]) {
@@ -160,6 +190,9 @@ pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Resul
     let result =
         run_worker(&branch, &args[separator + 1..], &interrupted, agent).and_then(|code| {
             if reviewed && code == 0 {
+                if managed_guest {
+                    flush_volume(&lock)?;
+                }
                 review(&interrupted)
             } else {
                 Ok(code)
@@ -179,6 +212,9 @@ pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Resul
         ))
     })?;
     fs::remove_dir(&staging)?;
+    if accepted && managed_guest {
+        flush_volume(&lock)?;
+    }
     if !accepted {
         eprintln!("rollback_us={}", start.elapsed().as_micros());
     }
