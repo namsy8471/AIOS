@@ -28,6 +28,17 @@ bash scripts/boot-test.sh /path/to/vmlinuz
 
 `src/main.rs`에는 저장 판정과 PID 1 진입점이, `scripts/boot-test.sh`에는 initramfs 생성 및 VM 부팅 과정이 있습니다. 먼저 저장 판정에서 모달 검사를 빼고 테스트 실패를 관찰한 뒤 복구해 보세요.
 
+### 펌웨어에서 ISO 부팅
+
+**Boot and save contract**의 성공한 실행에서 `aios-x86_64-boot` 아티팩트를 다운로드할 수 있습니다. 압축 파일에는 ISO, SHA-256 체크섬, BIOS와 UEFI 부팅 로그가 들어 있습니다. 이 이미지는 GRUB에서 Linux를 시작하고 Rust PID 1의 문서 저장 및 Landlock 쓰기 권한 검사를 마친 후 VM을 종료합니다. GTK와 MCP는 현재 Linux 호스트 통합 테스트에서 실행합니다.
+
+ISO를 다시 만들려면 위의 직접 부팅 테스트로 생성한 initramfs에 같은 커널을 사용합니다. 빌드 환경에는 GRUB의 i386-pc와 x86_64-efi 모듈, xorriso, mtools, OVMF가 필요합니다. CI는 디스크 없는 x86-64 VM 두 대에서 동일한 ISO로 부팅합니다.
+
+```sh
+bash scripts/boot-iso.sh /path/to/vmlinuz build/initramfs.gz
+(cd build/firmware && sha256sum -c SHA256SUMS)
+```
+
 ## GTK 저장 대화상자 관측
 
 Linux 통합 테스트는 가상 화면에서 GTK 3 테스트 편집기를 실행합니다. 관측기는 AT-SPI2로 편집기의 프로세스와 창을 찾고, 저장 대화상자가 보이는 상태인지 확인합니다.
