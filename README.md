@@ -59,6 +59,8 @@ GTK 측정에는 편집기 시작과 저장 확인이 포함됩니다. 두 경�
 
 AIOS 문서 작업자는 Landlock ABI 3 이상을 요구합니다. 조사한 SM8475 커뮤니티 커널 소스는 5.10.226이며 해당 커밋의 보안 서브시스템과 ARM64용 공통 시스템 호출 목록에서 Landlock 구현을 찾지 못했습니다. Linux에서 `aios kernel-capabilities`를 실행하거나 AIOS ARM64 콘솔에 `kernel-capabilities`를 입력하면 현재 커널에서 관측한 ABI와 조회 오류 번호를 확인할 수 있습니다. [커널 버전](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/Makefile) · [보안 서브시스템](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/tree/b04999acacba1a4f7797cb7d402b0fefe153bba9/security)
 
+초기 부팅 기록을 회수할 후보는 예약 RAM을 쓰는 `ramoops`입니다. `python scripts/inspect-flip4-ramoops.py dtb.img dtbo.img`로 확인한 커뮤니티 기본 기기 트리 다섯 개에는 모두 2MiB의 `pmsg-size`가 선언돼 있습니다. 이 노드에 `console-size`는 명시돼 있지 않습니다. 오버레이 열 개에는 삼성 `pstore_pmsg` 노드가 있고, 참조 커널에는 `PSTORE_RAM`, `PSTORE_PMSG`, `PSTORE_CONSOLE`이 내장돼 있습니다. 실기기 펌웨어에서 기록 장치가 등록되는지와 재부팅 뒤 로그를 읽을 수 있는지는 부팅 검증에서 확인할 항목입니다. [분석한 커뮤니티 DTB](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/prebuilt/dtb.img)
+
 **Boot and save contract** 실행의 `aios-arm64-qemu-console` 아티팩트에 Cortex-A53 가상 기기용 Linux 커널, 초기 부팅 파일, ext4 초기 디스크와 실행 스크립트가 있습니다. Linux 호스트에서 QEMU와 Bash를 사용합니다. 압축을 푼 폴더에서 다음과 같이 작업 디스크 사본을 부팅합니다.
 
 ```sh
