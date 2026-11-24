@@ -116,8 +116,7 @@ fn review(interrupted: &AtomicUsize) -> io::Result<u8> {
 }
 
 pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Result<ExitCode> {
-    let reviewed = matches!(agent, Some(crate::agent::Profile::Desktop))
-        && args.get(1).is_some_and(|arg| arg == "--review");
+    let reviewed = agent.is_some() && args.get(1).is_some_and(|arg| arg == "--review");
     let separator = if reviewed { 2 } else { 1 };
     if args.len() <= separator + 1 || args[separator] != "--" {
         return Err(io::Error::other(

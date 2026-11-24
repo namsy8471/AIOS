@@ -16,6 +16,11 @@ class DocumentRevision(BaseModel):
     revision: str
 
 
+class DocumentPage(DocumentRevision):
+    text: str
+    next_offset: int | None
+
+
 class SaveDecision(BaseModel):
     save: bool
 
@@ -31,7 +36,9 @@ def create_server(binary, workspace, filename):
     editors = {name: (runtime / f"{name}_editor.py").read_text(encoding="utf-8")
                for name in ("gtk", "qt")}
     editors["qt"] = (runtime / "document.py").read_text(encoding="utf-8") + "\n" + editors["qt"]
-    mcp = FastMCP("AIOS documents", instructions=f"This session can edit only {filename!r}.")
+    mcp = FastMCP("AIOS documents", instructions=(
+        f"This session can edit only {filename!r}. Use read_text and direct append_line for "
+        "document work. Select gtk or qt only for tasks requiring an editor UI."))
 
     @mcp.tool()
     def inspect_document() -> DocumentRevision:
@@ -40,18 +47,38 @@ def create_server(binary, workspace, filename):
         return DocumentRevision(document=filename, bytes=len(data), revision=digest(data))
 
     @mcp.tool()
+    def read_text(document: str, revision: str, offset: int = 0, limit: int = 4096) -> DocumentPage:
+        """Read a revision in Unicode code points. Follow next_offset until it is null."""
+        if document != filename:
+            raise ValueError("Document is outside this session's grant")
+        data = read_document(document_path)
+        if revision != digest(data):
+            raise ValueError("Document revision changed; inspect again")
+        text = data.decode("utf-8")
+        if not 0 <= offset <= len(text) or not 1 <= limit <= 8192:
+            raise ValueError("Expected a valid character offset and a limit from 1 to 8192")
+        end = min(len(text), offset + limit)
+        return DocumentPage(document=filename, revision=revision, bytes=len(data),
+                            text=text[offset:end], next_offset=end if end < len(text) else None)
+
+    @mcp.tool()
     async def append_line(document: str, revision: str, line: str, ctx: Context,
-                          editor: Literal["gtk", "qt"] = "gtk", review: bool = False) -> DocumentRevision:
-        """Append via GTK or Qt. Set review to confirm the staged save before publishing."""
+                          editor: Literal["direct", "gtk", "qt"] = "direct", review: bool = False) -> DocumentRevision:
+        """Append directly by default. Select gtk or qt for UI work, or review to confirm the save."""
         if document != filename:
             raise ValueError("Document is outside this session's grant")
         original = read_document(document_path)
         if revision != digest(original):
             raise ValueError("Document revision changed; inspect again")
         expected = append_bytes(original, line)
+        if editor == "direct":
+            profile = "agent-run"
+            args = ["--aios-append", filename, revision, expected[len(original):].decode(), digest(expected)]
+        else:
+            profile = "agent-gui-run"
+            args = ["/usr/bin/python3", "-I", "-c", worker, editors[editor], editor, filename, revision, line]
         process = await asyncio.create_subprocess_exec(
-            binary, "agent-gui-run", workspace, *(["--review"] if review else []), "--", "/usr/bin/python3", "-I",
-            "-c", worker, editors[editor], editor, filename, revision, line,
+            binary, profile, workspace, *(["--review"] if review else []), "--", *args,
             stdin=asyncio.subprocess.PIPE if review else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE if review else asyncio.subprocess.DEVNULL)
         try:

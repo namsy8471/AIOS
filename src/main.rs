@@ -2,6 +2,8 @@ use std::{fs, io, path::Path};
 #[cfg(target_os = "linux")]
 mod agent;
 #[cfg(target_os = "linux")]
+mod document;
+#[cfg(target_os = "linux")]
 mod workspace;
 
 struct Editor {

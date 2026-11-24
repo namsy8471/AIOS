@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory() as temp:
                     revision = hashlib.sha256(original).hexdigest()
                     assert state["structuredContent"]["revision"] == revision
                     request = dict(name="append_line", arguments=dict(document="note.txt",
-                                   revision=revision, line=line))
+                                   revision=revision, line=line, editor="gtk"))
                     result = rpc(3, "tools/call", request)
                     assert result.get("structuredContent", {}).get("revision") == hashlib.sha256(expected).hexdigest(), result
                     assert rpc(4, "tools/call", request)["isError"]
@@ -101,6 +101,27 @@ with tempfile.TemporaryDirectory() as temp:
                         **qt, "line": appended}), "accept")
                     expected += b"\r\n" + appended.encode()
                     assert saved.get("structuredContent", {}).get("revision") == hashlib.sha256(expected).hexdigest(), saved
+                    direct = dict(document="note.txt", revision=hashlib.sha256(expected).hexdigest(),
+                                  line="직접 편집 검토", review=True)
+                    for index, decision in enumerate(("cancel", "accept"), 8):
+                        result = rpc(index, "tools/call", dict(name="append_line", arguments=direct), decision)
+                        if decision == "cancel":
+                            assert result["isError"] and "discarded" in str(result), result
+                        else:
+                            expected += b"\r\n" + direct["line"].encode()
+                            assert result["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
+                    timings = {"direct": [], "gtk": []}
+                    for pair in range(6):
+                        for step, path in enumerate(("direct", "gtk") if pair % 2 == 0 else ("gtk", "direct")):
+                            suffix = f"측정 {pair}"
+                            args = dict(document="note.txt", revision=hashlib.sha256(expected).hexdigest(),
+                                        line=suffix, editor=path)
+                            start = time.perf_counter_ns()
+                            result = rpc(20 + 2 * pair + step, "tools/call", dict(name="append_line", arguments=args))
+                            timings[path].append((time.perf_counter_ns() - start) / 1e6)
+                            expected += b"\r\n" + suffix.encode()
+                            assert result["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
+                    Path("build/runtime/append-latency.json").write_text(json.dumps(timings))
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
             assert vm.wait(timeout=45) == 0

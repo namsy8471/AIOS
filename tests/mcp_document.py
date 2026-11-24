@@ -25,12 +25,20 @@ async def verify(binary, mount):
     async with stdio_client(params) as streams, ClientSession(*streams) as client:
         await client.initialize()
         listing = await client.list_tools()
-        assert {tool.name for tool in listing.tools} == {"inspect_document", "append_line"}
+        assert {tool.name for tool in listing.tools} == {"inspect_document", "read_text", "append_line"}
         inspected = await client.call_tool("inspect_document", {})
         assert not inspected.isError
         rev = inspected.structuredContent["revision"]
         assert rev == hashlib.sha256(original).hexdigest()
         request = {"document": filename, "revision": rev, "line": "검토 완료"}
+        page = await client.call_tool("read_text", dict(document=filename, revision=rev, limit=2))
+        first = page.structuredContent
+        next_page = await client.call_tool("read_text", dict(document=filename, revision=rev,
+                                                              offset=first["next_offset"]))
+        assert (first["text"] + next_page.structuredContent["text"]).encode() == original
+        assert next_page.structuredContent["next_offset"] is None
+        denied = await client.call_tool("read_text", dict(document="../other.txt", revision=rev))
+        assert denied.isError
         for change in [{"document": "../other.txt"}, {"line": "두\n줄"}]:
             denied = await client.call_tool("append_line", {**request, **change})
             assert denied.isError and document.read_bytes() == original
@@ -41,8 +49,10 @@ async def verify(binary, mount):
         assert saved.structuredContent["revision"] == hashlib.sha256(expected).hexdigest()
         replay = await client.call_tool("append_line", request)
         assert replay.isError and document.read_bytes() == expected
+        stale_page = await client.call_tool("read_text", dict(document=filename, revision=rev))
+        assert stale_page.isError
         assert outside.read_bytes() == b"original"
-    print("MCP client verified GTK save, CRLF, scoped grant and stale revision rejection")
+    print("MCP client verified paged read, direct save, CRLF, scoped grant and stale revision rejection")
 
 
 if __name__ == "__main__":
