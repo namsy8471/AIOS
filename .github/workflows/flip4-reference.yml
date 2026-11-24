@@ -26,6 +26,17 @@ jobs:
             cd build/flip4/bundle
             sha256sum kernel starter.raw *.py > SHA256SUMS
           '
+      - name: Assemble the Android v2 diagnostic image and boot its extracted payloads
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y mkbootimg qemu-system-arm
+          curl -fsSL --retry 3 https://github.com/rainbowdashh/android_device_samsung_b4q/releases/download/V2/twrp_b4q_V2.img -o build/flip4/recovery.img
+          echo '2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  build/flip4/recovery.img' | sha256sum -c -
+          bash scripts/flip4-reference-image.sh build/flip4/recovery.img build/flip4/pstore build/flip4/reference-image
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-reference-unsigned
+          path: build/flip4/reference-image/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
