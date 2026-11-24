@@ -3,10 +3,43 @@ use rustix::fs::{CWD, RenameFlags, renameat_with};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
-
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
-use std::time::Instant;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::{Duration, Instant};
+
+fn run_worker(branch: &Path, args: &[OsString], interrupted: &AtomicUsize) -> io::Result<u8> {
+    // util-linux binds the namespace init's lifetime to the unshare supervisor.
+    let mut worker = Command::new("unshare")
+        .args([
+            "--user",
+            "--map-root-user",
+            "--pid",
+            "--fork",
+            "--kill-child=KILL",
+            "--",
+        ])
+        .args(args)
+        .current_dir(branch)
+        .process_group(0)
+        .spawn()?;
+    loop {
+        let signal = interrupted.load(Ordering::SeqCst);
+        if signal != 0 {
+            worker.kill()?;
+            worker.wait()?;
+            return Ok(128 + signal as u8);
+        }
+        if let Some(status) = worker.try_wait()? {
+            return Ok(status.code().unwrap_or(1) as u8);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 fn btrfs(operation: &str, paths: &[&Path]) -> io::Result<()> {
     let status = Command::new("btrfs")
@@ -33,6 +66,10 @@ pub fn run(args: &[OsString]) -> io::Result<ExitCode> {
         .parent()
         .ok_or_else(|| io::Error::other("expected a workspace under a managed directory"))?;
     let lock = File::open(parent)?;
+    let interrupted = Arc::new(AtomicUsize::new(0));
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        signal_hook::flag::register_usize(signal, interrupted.clone(), signal as usize)?;
+    }
     lock.try_lock()
         .map_err(|e| io::Error::other(format!("workspace parent unavailable: {e}")))?;
     btrfs("show", &[&root])?;
@@ -58,19 +95,9 @@ pub fn run(args: &[OsString]) -> io::Result<ExitCode> {
     eprintln!("checkpoint_us={}", start.elapsed().as_micros());
     // The workload is PID 1 in its own PID namespace. Linux tears down all
     // remaining processes there when PID 1 exits, including detached writers.
-    let result = Command::new("unshare")
-        .args([
-            "--user",
-            "--map-root-user",
-            "--pid",
-            "--fork",
-            "--kill-child=KILL",
-            "--",
-        ])
-        .args(&args[2..])
-        .current_dir(&branch)
-        .status();
-    let accepted = result.as_ref().is_ok_and(|status| status.success());
+    let result = run_worker(&branch, &args[2..], &interrupted);
+    let signal = interrupted.load(Ordering::SeqCst);
+    let accepted = signal == 0 && matches!(result, Ok(0));
     let start = Instant::now();
     if accepted {
         renameat_with(CWD, &root, CWD, &branch, RenameFlags::EXCHANGE)?;
@@ -86,6 +113,9 @@ pub fn run(args: &[OsString]) -> io::Result<ExitCode> {
     if !accepted {
         eprintln!("rollback_us={}", start.elapsed().as_micros());
     }
-    let status = result?;
-    Ok(ExitCode::from(status.code().unwrap_or(1) as u8))
+    Ok(ExitCode::from(if signal == 0 {
+        result?
+    } else {
+        128 + signal as u8
+    }))
 }

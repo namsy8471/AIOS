@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -60,6 +61,23 @@ def verify(binary, mount):
         assert match and int(match[1]) < limit, failure.stderr
     time.sleep(0.6)
     assert not marker.exists()
+    assert tree_hash(root) == before
+    ready = mount / "writer-ready"
+    pending = subprocess.Popen([*command, "-c",
+        "import sys,time; from pathlib import Path; "
+        "Path('00000.txt').write_text('pending'); Path(sys.argv[1]).touch(); "
+        "time.sleep(30)", ready])
+    try:
+        until = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < until and pending.poll() is None:
+            time.sleep(0.02)
+        assert ready.exists(), "writer did not start"
+        pending.send_signal(signal.SIGINT)
+        assert pending.wait(timeout=3) == 130
+    finally:
+        if pending.poll() is None:
+            pending.terminate()
+            pending.wait(timeout=5)
     assert tree_hash(root) == before
     # A new process opens the restored tree and commits a subsequent valid edit.
     subprocess.run([*command, "-c",
