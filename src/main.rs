@@ -63,6 +63,18 @@ fn main() -> io::Result<std::process::ExitCode> {
         }
         return Err(io::Error::other(format!("unknown command: {command:?}")));
     }
+    #[cfg(target_os = "linux")]
+    if std::process::id() == 1 && Path::new("/opt/aios/guest.py").is_file() {
+        let status = std::process::Command::new("/usr/bin/python3")
+            .arg("/opt/aios/guest.py")
+            .status();
+        println!("AIOS_RUNTIME_EXIT {status:?}");
+        unsafe {
+            libc::sync();
+            libc::reboot(libc::RB_POWER_OFF);
+        }
+        return Err(io::Error::last_os_error());
+    }
     run_demo()?;
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 {
