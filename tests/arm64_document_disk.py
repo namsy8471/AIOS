@@ -42,6 +42,19 @@ for boot, expected in enumerate((original, saved, durable), 1):
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
             result = command(vm, log, "inspect", "AIOS_DOCUMENT ")
             assert result == f"AIOS_DOCUMENT revision={revision(expected)} bytes={len(expected.encode())}", result
+            observed = result.split()[1].split("=")[1]
+            offset = 0
+            chunks = []
+            while offset is not None:
+                reply = command(vm, log, f"read {observed} {offset} 3", "AIOS_PAGE ")
+                page = json.loads(reply.removeprefix("AIOS_PAGE "))
+                assert page["revision"] == observed and 0 < len(page["text"]) <= 3
+                chunks.append(page["text"])
+                next_byte = page["next_byte"]
+                assert next_byte is None or next_byte == offset + len(page["text"].encode())
+                offset = next_byte
+            assert "".join(chunks) == expected
+            command(vm, log, f"read {observed} 1 3", "AIOS_REJECT invalid-read")
             if boot == 1:
                 if model_port is None:
                     result = command(vm, log, f"append {revision(original)} {addition}", "AIOS_SAVED ")
@@ -49,7 +62,12 @@ for boot, expected in enumerate((original, saved, durable), 1):
                     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
                     from model_mvp import run_model
 
-                    def tool(name, document, revision, line):
+                    def tool(name, document, revision, line=None):
+                        if name == "read_text" and document == "note.txt":
+                            reply = command(vm, log, f"read {revision} 0 512", "AIOS_")
+                            if not reply.startswith("AIOS_PAGE "):
+                                raise ValueError(reply)
+                            return json.loads(reply.removeprefix("AIOS_PAGE "))
                         if (name != "append_line" or document != "note.txt" or not line.isprintable()
                                 or len(line.encode()) > 3900):
                             raise ValueError("Expected a single printable console line")
@@ -60,10 +78,12 @@ for boot, expected in enumerate((original, saved, durable), 1):
 
                     instruction = f"문서 마지막에 '{addition}' 한 줄을 추가해 줘."
                     catalog = [{"name": "append_line", "inputSchema": {"properties": {"line": {"type": "string"}}}}]
+                    catalog.append({"name": "read_text", "inputSchema": {"properties": {}}})
                     state = {"document": "note.txt", "revision": result.split()[1].split("=")[1]}
                     published, trace = run_model(model_port, instruction, catalog, tool, state)
                     result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(saved)}", result
+                command(vm, log, f"read {observed} 0 3", "AIOS_REJECT invalid-read")
                 command(vm, log, f"append {revision(original)} 중복", "AIOS_REJECT invalid-edit")
             if boot == 2:
                 result = command(vm, log, f"append {revision(saved)} 전원 중단 검증", "AIOS_SAVED ")

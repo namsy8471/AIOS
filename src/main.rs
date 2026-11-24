@@ -103,6 +103,28 @@ fn main() -> io::Result<std::process::ExitCode> {
 }
 
 #[cfg(target_os = "linux")]
+fn document_page(text: &str, revision: &str, request: &str) -> Option<serde_json::Value> {
+    let mut fields = request.split_whitespace();
+    let requested = fields.next()?;
+    let offset = fields.next()?.parse::<usize>().ok()?;
+    let limit = fields.next()?.parse::<usize>().ok()?;
+    if requested != revision || !(1..=512).contains(&limit) || fields.next().is_some() {
+        return None;
+    }
+    let remaining = text.get(offset..)?;
+    let length = remaining
+        .char_indices()
+        .nth(limit)
+        .map_or(remaining.len(), |(index, _)| index);
+    let end = offset + length;
+    Some(serde_json::json!({
+        "revision": revision,
+        "text": &remaining[..length],
+        "next_byte": (end < text.len()).then_some(end),
+    }))
+}
+
+#[cfg(target_os = "linux")]
 fn document_console() -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
     use std::io::BufRead;
@@ -122,6 +144,13 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         let observed = format!("{:x}", Sha256::digest(original.as_bytes()));
         if line == "inspect" {
             println!("AIOS_DOCUMENT revision={observed} bytes={}", original.len());
+            continue;
+        }
+        if let Some(request) = line.strip_prefix("read ") {
+            match document_page(&original, &observed, request) {
+                Some(page) => println!("AIOS_PAGE {page}"),
+                None => println!("AIOS_REJECT invalid-read"),
+            }
             continue;
         }
         let Some((revision, text)) = line.strip_prefix("append ").and_then(|r| r.split_once(' '))
