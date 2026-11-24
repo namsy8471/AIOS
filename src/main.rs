@@ -303,6 +303,23 @@ fn document_console() -> io::Result<std::process::ExitCode> {
 
 #[cfg(target_os = "linux")]
 fn guest_memory() -> io::Result<serde_json::Value> {
+    // The Flip4 disk boots directly into PID 1, without an initramfs mounting procfs.
+    if std::process::id() == 1 && !Path::new("/proc/self/status").exists() {
+        fs::create_dir_all("/proc")?;
+        let flags = libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+        if unsafe {
+            libc::mount(
+                c"proc".as_ptr(),
+                c"/proc".as_ptr(),
+                c"proc".as_ptr(),
+                flags,
+                std::ptr::null(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
     fn kib(report: &str, key: &str) -> io::Result<u64> {
         report
             .lines()
