@@ -47,36 +47,53 @@ fn run_demo() -> io::Result<()> {
     result.and(cleanup)
 }
 
+#[cfg(target_os = "linux")]
+fn kernel_capabilities() -> serde_json::Value {
+    // LANDLOCK_CREATE_RULESET_VERSION queries the ABI without installing a policy.
+    let abi = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_create_ruleset,
+            std::ptr::null::<u8>(),
+            0usize,
+            1u32,
+        )
+    };
+    let error = (abi < 0)
+        .then(|| io::Error::last_os_error().raw_os_error())
+        .flatten();
+    serde_json::json!({
+        "landlock_abi": (abi >= 0).then_some(abi),
+        "query_errno": error,
+        "document_worker_minimum_abi": 3,
+        "meets_abi_minimum": abi >= 3,
+    })
+}
+
 fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
         return document_console();
     }
+    #[cfg(target_os = "linux")]
+    if std::process::id() == 1 && Path::new("/aios-boot-probe").is_file() {
+        use std::io::Write;
+        let report = serde_json::json!({
+            "pid": std::process::id(),
+            "arch": std::env::consts::ARCH,
+            "kernel": kernel_capabilities(),
+        });
+        let mut log = fs::OpenOptions::new().write(true).open("/dev/kmsg")?;
+        writeln!(log, "<4>AIOS_EARLY_INIT {report}")?;
+        unsafe {
+            libc::reboot(libc::RB_POWER_OFF);
+        }
+        return Err(io::Error::last_os_error());
+    }
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
         if command == "kernel-capabilities" {
-            // LANDLOCK_CREATE_RULESET_VERSION queries the ABI without installing a policy.
-            let abi = unsafe {
-                libc::syscall(
-                    libc::SYS_landlock_create_ruleset,
-                    std::ptr::null::<u8>(),
-                    0usize,
-                    1u32,
-                )
-            };
-            let error = (abi < 0)
-                .then(|| io::Error::last_os_error().raw_os_error())
-                .flatten();
-            println!(
-                "{}",
-                serde_json::json!({
-                    "landlock_abi": (abi >= 0).then_some(abi),
-                    "query_errno": error,
-                    "document_worker_minimum_abi": 3,
-                    "meets_abi_minimum": abi >= 3,
-                })
-            );
+            println!("{}", kernel_capabilities());
             return Ok(std::process::ExitCode::SUCCESS);
         }
         #[cfg(target_os = "linux")]
