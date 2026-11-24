@@ -9,13 +9,15 @@ import time
 
 
 bundle, initramfs, disk, output = map(Path, sys.argv[1:5])
+local_model = sys.argv[5:] == ["--model"]
 monitor = disk.with_suffix(".qmp")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
 
 
 args = [
-    "qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a53", "-m", "256M",
+    "qemu-system-aarch64", "-machine", "virt", "-cpu", "max" if local_model else "cortex-a53",
+    "-smp", "4" if local_model else "1", "-m", "1536M" if local_model else "256M",
     "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot",
     "-qmp", f"unix:{monitor},server=on,wait=off",
     "-kernel", str(bundle / "vmlinuz-virt"), "-initrd", str(initramfs),
@@ -108,7 +110,13 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 assert wait(vm, log, "AIOS_") == "AIOS_REJECT confirmation-canceled"
                 assert read_document(vm, before)["text"] == original
 
-                assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
+                if local_model:
+                    instruction = "메모에 '우유'를 적어줘."
+                    usage = command(vm, log, f"model-confirm-append {before} {instruction}", "MODEL_USAGE ")
+                    report["model_usage"] = json.loads(usage.removeprefix("MODEL_USAGE "))
+                    assert wait(vm, log, "AIOS_").startswith("AIOS_CONFIRM_READY ")
+                else:
+                    assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 capture_frame(stream, output / "confirmation.ppm", ("38425a", "12192d", "204caf"), 0.79)
                 tap(stream, 24576, 24576)
                 expected = original + "\n우유"

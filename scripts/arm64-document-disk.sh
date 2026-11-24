@@ -53,6 +53,13 @@ mknod -m 600 "$stage/root/dev/dri/card0" c 226 0
 mknod -m 600 "$stage/root/dev/input/event0" c 13 64
 truncate -s 48M "$stage/display.raw"
 mkfs.ext4 -q -F -d "$stage/root" "$stage/display.raw"
+if [[ ${AIOS_PACKAGE_DISPLAY:-0} == 1 ]]; then
+  package=build/arm64-display-package
+  mkdir -p "$package"
+  cp "$bundle"/{vmlinuz-virt,arm64_model.py,model_mvp.py} "$package/"
+  cp "$stage/display-initramfs" "$package/display-initramfs"
+  cp "$stage/display.raw" "$package/display-starter.raw"
+fi
 timeout 90s python3 tests/arm64_drm.py "$bundle" "$stage/display-initramfs" "$stage/display.raw" "$display"
 debugfs -R "dump /work/note.txt $stage/touch-saved.txt" "$stage/display.raw"
 printf '작업 기록\n우유' | cmp - "$stage/touch-saved.txt"

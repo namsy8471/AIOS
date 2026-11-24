@@ -9,8 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Boot the minimal Rust core on an emulated ARM64 Cortex-A53
+        env:
+          AIOS_PACKAGE_DISPLAY: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
+          docker run --rm -e AIOS_PACKAGE_DISPLAY -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
             apk add --no-cache bash coreutils cpio curl findutils freetype-dev gcc binutils linux-virt musl-dev qemu-system-aarch64 qemu-hw-display-virtio-gpu-pci sudo python3 e2fsprogs e2fsprogs-extra libdrm-dev pkgconf
             bash scripts/boot-test.sh /boot/vmlinuz-virt
             bash scripts/arm64-early-init.sh /boot/vmlinuz-virt build/early-init
@@ -34,6 +36,38 @@ jobs:
           name: aios-arm64-qemu-console
           path: build/arm64-console/
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: aios-arm64-display-package
+          path: build/arm64-display-package/
+          if-no-files-found: error
+  arm64-model-display:
+    if: github.event_name == 'workflow_dispatch'
+    needs: arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: aios-arm64-display-package
+          path: build/arm64-display-package
+      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build
+      - name: Review a local model edit on the guest display
+        run: |
+          bundle=build/arm64-display-package
+          proof=build/arm64-model-display
+          mkdir -p "$proof"
+          bash scripts/flip4-model-disk.sh "$bundle" "$bundle/model-work.raw" flat
+          timeout 420s python3 tests/arm64_drm.py "$bundle" "$bundle/display-initramfs" "$bundle/model-work.raw" "$proof" --model
+          debugfs -R 'cat /work/note.txt' "$bundle/model-work.raw" > "$proof/saved.txt"
+          printf '작업 기록\n우유' | cmp - "$proof/saved.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aios-arm64-model-display-proof
+          path: build/arm64-model-display/
   arm64-model:
     if: github.event_name == 'workflow_dispatch'
     needs: arm64

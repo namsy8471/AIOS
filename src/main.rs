@@ -523,8 +523,13 @@ fn document_console(
         let confirmation = guest_init
             .then(|| line.strip_prefix("confirm-append "))
             .flatten();
+        let model_confirmation = guest_init
+            .then(|| line.strip_prefix("model-confirm-append "))
+            .flatten();
         let korean = line.strip_prefix("korean ");
-        let model_request = line.strip_prefix("model-append ").zip(model);
+        let model_request = model_confirmation
+            .or_else(|| line.strip_prefix("model-append "))
+            .zip(model);
         let edit = if let Some(request) = korean.or(model_request.map(|(request, _)| request)) {
             let Some((revision, instruction)) = request.split_once(' ') else {
                 println!("AIOS_REJECT invalid-request");
@@ -572,7 +577,7 @@ fn document_console(
             println!("AIOS_REJECT invalid-edit");
             continue;
         }
-        if confirmation.is_some() {
+        if confirmation.is_some() || model_confirmation.is_some() {
             if text.len() > 512 || text.trim().is_empty() || text.chars().any(char::is_control) {
                 println!("AIOS_REJECT invalid-edit");
                 continue;

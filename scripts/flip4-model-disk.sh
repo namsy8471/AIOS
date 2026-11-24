@@ -3,6 +3,8 @@
 set -euo pipefail
 bundle=${1:?Pass the Flip4 bundle directory}
 disk=${2:?Pass a new output disk path}
+layout=${3:-split}
+[[ "$layout" == split || "$layout" == flat ]]
 [[ $(uname -m) == aarch64 && ! -e "$disk" ]]
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
@@ -19,8 +21,12 @@ if readelf -l "$binary" | grep 'INTERP'; then exit 1; fi
 model=qwen2.5-0.5b-instruct-q4_k_m.gguf
 curl -fsSL --retry 3 "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/$model" -o "$stage/model.gguf"
 (cd "$stage" && echo '74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db  model.gguf' | sha256sum -c -)
-dd if="$bundle/split-starter.raw" of="$stage/system.ext4" bs=1M skip=1 count=16 status=none
-dd if="$bundle/split-starter.raw" of="$stage/work.ext4" bs=1M skip=17 count=16 status=none
+if [[ "$layout" == split ]]; then
+  dd if="$bundle/split-starter.raw" of="$stage/system.ext4" bs=1M skip=1 count=16 status=none
+  dd if="$bundle/split-starter.raw" of="$stage/work.ext4" bs=1M skip=17 count=16 status=none
+else
+  cp "$bundle/display-starter.raw" "$stage/system.ext4"
+fi
 truncate -s 768M "$stage/system.ext4"
 resize2fs "$stage/system.ext4"
 debugfs -w "$stage/system.ext4" <<CMDS
@@ -30,6 +36,10 @@ write $binary /opt/model/llama-simple
 write $stage/model.gguf /opt/model/model.gguf
 CMDS
 e2fsck -fn "$stage/system.ext4"
+if [[ "$layout" == flat ]]; then
+  mv "$stage/system.ext4" "$disk"
+  exit
+fi
 truncate -s 786M "$stage/disk.raw"
 parted -s "$stage/disk.raw" mklabel msdos \
   mkpart primary ext4 1MiB 769MiB mkpart primary ext4 769MiB 785MiB
