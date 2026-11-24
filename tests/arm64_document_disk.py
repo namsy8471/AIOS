@@ -33,7 +33,7 @@ for boot in (1, 2):
         "timeout", "90s", "qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a53",
         "-m", "128M", "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio",
         "-no-reboot", "-kernel", "/boot/vmlinuz-virt", "-initrd", "/boot/initramfs-virt",
-        "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rw panic=1",
+        "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw rw panic=1",
         "-drive", f"file={sys.argv[1]},if=virtio,format=raw,cache=none",
     ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:
@@ -48,6 +48,10 @@ for boot in (1, 2):
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
             assert vm.wait(timeout=20) == 0
+        except Exception:
+            log.flush()
+            print(Path(log.name).read_bytes()[-4000:].decode(errors='replace'), flush=True)
+            raise
         finally:
             if vm.poll() is None:
                 vm.terminate()
