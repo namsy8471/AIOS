@@ -133,11 +133,14 @@ jobs:
       - name: Inspect normal module loading on the isolated reference kernel
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cpio gcc libc6-dev mkbootimg qemu-system-arm
+          sudo apt-get install -y binutils cpio gcc libc6-dev mkbootimg qemu-system-arm
           mkdir -p build/flip4
           curl -fsSL --retry 3 https://github.com/rainbowdashh/android_device_samsung_b4q/releases/download/V2/twrp_b4q_V2.img -o build/flip4/recovery.img
           echo '2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  build/flip4/recovery.img' | sha256sum -c -
           python3 tests/flip4_module_probe.py build/flip4/recovery.img build/flip4/driver-probe
+      - name: Record the reference board modules' required symbol versions
+        run: |
+          python3 tests/flip4_module_probe.py build/flip4/recovery.img build/flip4/driver-probe --abi-only --board-overlay
       - uses: actions/upload-artifact@v4
         if: always()
         with:

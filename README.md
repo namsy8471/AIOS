@@ -98,6 +98,8 @@ python3 arm64_model.py work.raw --show
 
 실물의 커널 릴리스는 `5.10.252-android12-9-31998796-abF721NKSU8IZJC`입니다. 공개 TWRP V2 램디스크에서 추출한 `msm_drm.ko`, `fst2ca78y_i2c.ko`, `zinitix_ts.ko`, `ufs_qcom.ko`는 모두 `5.10.168-android12-9-gki-27941020-abF721BXXS4EWL5`로 시작하고 `modversions`를 포함하는 `vermagic`을 선언합니다. 현재 모듈 로드 증거는 참조 커널의 QEMU 결과이며, 실기 펌웨어와의 심벌 호환성은 별도 확인이 필요합니다. [참조 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
 
+공개 복구 이미지의 보드 모듈 ABI를 오프라인에서 기록하려면 `python3 tests/flip4_module_probe.py recovery.img build/flip4/abi --abi-only --board-overlay`를 실행합니다. 이 작업에는 `unpack_bootimg`, `cpio`, `readelf`가 필요합니다. `abi.json`에는 모듈 해시, `vermagic`, 필요한 심벌의 CRC가 들어갑니다. 대상 빌드의 `Module.symvers`가 있으면 `--module-symvers Module.symvers`로 누락 심벌과 CRC 불일치를 대조할 수 있습니다. 이 대조는 비교 파일에 수록된 심벌에 한정되며, 드라이버 로드와 실기 동작은 별도 검증 항목입니다.
+
 Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플립4를 연결한 뒤 `scripts/flip4-inventory.ps1`을 실행합니다. 스크립트는 USB 기기 한 대를 선택해 모델과 빌드 번호, 보안 패치 버전, Android가 보고한 부트로더 잠금·Verified Boot 상태를 읽습니다. 펌웨어가 노출한 기기 트리 값도 함께 기록합니다. [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
 
 `python scripts/inspect-flip4-boot-image.py recovery.img`는 압축을 푼 Android 헤더 v2 파일에서 각 구성 요소의 위치·크기·SHA-256과 AVB 푸터 위치를 읽습니다. 커뮤니티 TWRP V2 이미지에서 확인한 페이지 크기는 4096바이트이며, 커널·DTB·복구 DTBO의 해시는 프로젝트에서 별도로 조사한 참조 파일들과 일치합니다. 푸터 검사는 파일 범위를 확인하며, 서명 검증과 실기기 호환성 판단에는 별도 증거가 필요합니다. [검사한 커뮤니티 복구 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -51,15 +52,81 @@ def module_order(dependency_text, targets=TARGETS):
     return list(ordered)
 
 
+def module_abi(path):
+    data = path.read_bytes()
+    if data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", data, 18)[0] != 183:
+        raise ValueError(f"Expected ARM64 little-endian ELF: {path.name}")
+    section_table = subprocess.check_output(["readelf", "-SW", path], text=True)
+    sections = {}
+    for name, offset, size in re.findall(
+        r"^\s*\[\s*\d+\]\s+(\.modinfo|__versions)\s+PROGBITS\s+[0-9a-f]+\s+([0-9a-f]+)\s+([0-9a-f]+)\s",
+        section_table, re.MULTILINE,
+    ):
+        start, length = int(offset, 16), int(size, 16)
+        if start + length > len(data):
+            raise ValueError(f"Truncated {name} in {path.name}")
+        sections[name] = data[start:start + length]
+    vermagic, = [entry.removeprefix(b"vermagic=").decode().strip()
+                 for entry in sections[".modinfo"].split(b"\0") if entry.startswith(b"vermagic=")]
+    required = {}
+    for crc, name in struct.iter_unpack("<Q56s", sections.get("__versions", b"")):
+        symbol = name.split(b"\0", 1)[0].decode()
+        if not symbol or symbol in required or crc > 0xFFFFFFFF:
+            raise ValueError(f"Invalid symbol version in {path.name}")
+        required[symbol] = f"0x{crc:08x}"
+    return {"sha256": hashlib.sha256(data).hexdigest(), "vermagic": vermagic, "required_crcs": required}
+
+
+def symbol_exports(data):
+    exports = {}
+    for line in data.decode().splitlines():
+        if not line.strip():
+            continue
+        crc, symbol, *_ = line.split()
+        if not re.fullmatch(r"0x[0-9a-fA-F]{8}", crc):
+            raise ValueError(f"Invalid Module.symvers CRC for {symbol}")
+        if exports.setdefault(symbol, crc.lower()) != crc.lower():
+            raise ValueError(f"Conflicting Module.symvers CRCs for {symbol}")
+    if not exports:
+        raise ValueError("Module.symvers has no symbol exports")
+    return exports
+
+
+def abi_report(kernel_hash, root, order, symvers):
+    report = {"scope": "offline_arm64_reference_modules", "kernel_sha256": kernel_hash, "modules": {}}
+    exports = None
+    if symvers:
+        source = symvers.read_bytes()
+        exports = symbol_exports(source)
+        report["module_symvers_sha256"] = hashlib.sha256(source).hexdigest()
+    for module in order:
+        abi = module_abi(root / "lib/modules" / module)
+        if exports is not None:
+            required = abi["required_crcs"]
+            abi["missing_exports"] = sorted(required.keys() - exports.keys())
+            abi["crc_mismatches"] = {
+                name: {"required": crc, "exported": exports[name]}
+                for name, crc in required.items() if name in exports and exports[name] != crc
+            }
+        report["modules"][module] = abi
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recovery", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--overlay", action="store_true", help="build the driver archive for a reference document boot")
     parser.add_argument("--board-overlay", action="store_true", help="include CAPE hardware providers in the driver overlay")
+    parser.add_argument("--abi-only", action="store_true", help="report module ABI metadata without booting a guest")
+    parser.add_argument("--module-symvers", type=Path, help="compare against exports from a specific target build")
     args = parser.parse_args()
-    if args.board_overlay and not args.overlay:
-        parser.error("--board-overlay requires --overlay")
+    if args.abi_only and args.overlay:
+        parser.error("--abi-only and --overlay are mutually exclusive")
+    if args.module_symvers and not args.abi_only:
+        parser.error("--module-symvers requires --abi-only")
+    if args.board_overlay and not (args.overlay or args.abi_only):
+        parser.error("--board-overlay requires --overlay or --abi-only")
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         stage = Path(directory)
@@ -80,6 +147,10 @@ def main():
                        input=archive, cwd=root, check=True)
         if any(not (root / path).is_file() or (root / path).is_symlink() for path in paths):
             raise ValueError("The recovery ramdisk did not provide each declared module as a file")
+        if args.abi_only:
+            report = abi_report(kernel_hash, root, order, args.module_symvers)
+            (args.output / "abi.json").write_text(json.dumps(report, indent=2) + "\n")
+            return
         (root / "module-order").write_text("\n".join(order) + "\n")
         if args.board_overlay:
             diagnostic_targets = (*PROVIDERS.values(), "msm_drm.ko", "ufs_qcom.ko")
