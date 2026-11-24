@@ -14,19 +14,11 @@ multitouch = sys.argv[5:] == ["--multitouch"]
 monitor = disk.with_suffix(".qmp")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
+from arm64_touch import launch
 
 
-args = [
-    "qemu-system-aarch64", "-machine", "virt", "-cpu", "max" if local_model else "cortex-a53",
-    "-smp", "4" if local_model else "1", "-m", "1536M" if local_model else "256M",
-    "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot",
-    "-qmp", f"unix:{monitor},server=on,wait=off",
-    "-kernel", str(bundle / "vmlinuz-virt"), "-initrd", str(initramfs),
-    "-drive", f"file={disk},if=virtio,format=raw",
-    "-device", "virtio-gpu-pci,xres=1080,yres=2640" if multitouch else "virtio-gpu-pci",
-    "-device", "virtio-multitouch-pci" if multitouch else "virtio-tablet-pci",
-    "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw rw modules=virtio_gpu,virtio_input,evdev panic=1",
-]
+args = launch(bundle, disk, display="none", model=local_model, multitouch=multitouch,
+              monitor=f"unix:{monitor},server=on,wait=off", initramfs=initramfs)
 
 
 def qmp(stream, name, arguments=None):

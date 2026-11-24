@@ -54,10 +54,11 @@ mknod -m 600 "$stage/root/dev/input/event0" c 13 64
 truncate -s 48M "$stage/display.raw"
 mkfs.ext4 -q -F -d "$stage/root" "$stage/display.raw"
 cp "$stage/display.raw" "$stage/multitouch.raw"
+cp scripts/arm64_touch.py "$bundle/"
 if [[ ${AIOS_PACKAGE_DISPLAY:-0} == 1 ]]; then
   package=build/arm64-display-package
   mkdir -p "$package"
-  cp "$bundle"/{vmlinuz-virt,arm64_model.py,model_mvp.py} "$package/"
+  cp "$bundle"/{vmlinuz-virt,arm64_model.py,arm64_touch.py,model_mvp.py} "$package/"
   install -m 0644 "$stage/display-initramfs" "$package/display-initramfs"
   cp "$stage/display.raw" "$package/display-starter.raw"
 fi
