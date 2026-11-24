@@ -97,26 +97,18 @@ if ($Editor) {
     exit
 }
 
-function Find-Elements($parent, $property, $value, $scope) {
-    $condition = [Windows.Automation.PropertyCondition]::new($property, $value)
-    $parent.FindAll($scope, $condition)
+$runtime = Join-Path $PSScriptRoot '../runtime'
+. (Join-Path $runtime 'windows_text.ps1')
+if (!('EditorSnapshot' -as [type])) {
+    $references = @([Windows.Automation.AutomationElement].Assembly.Location,
+                    [Windows.Automation.AutomationPattern].Assembly.Location,
+                    [Windows.Rect].Assembly.Location)
+    Add-Type -Path (Join-Path $runtime 'windows_snapshot.cs') -ReferencedAssemblies $references
 }
+if ($Toolkit -eq 'winforms') { Initialize-NativeEditorText }
 
 function Get-State {
-    $elements = @(Find-Elements ([Windows.Automation.AutomationElement]::RootElement) ([Windows.Automation.AutomationElement]::ProcessIdProperty) $child.Id Children)
-    $main = $null
-    foreach ($elem in $elements) {
-        if ($elem.Current.Name -eq 'AIOS test editor') { $main = $elem }
-        $windows = @($elem) + @(Find-Elements $elem ([Windows.Automation.AutomationElement]::ControlTypeProperty) ([Windows.Automation.ControlType]::Window) Descendants)
-        foreach ($w in $windows) {
-            $pattern = $null
-            if ($w.TryGetCurrentPattern([Windows.Automation.WindowPattern]::Pattern, [ref]$pattern) -and $pattern.Current.IsModal -and $w.Current.Name -ne 'AIOS test editor') {
-                return @{ State = 'dialog' }
-            }
-        }
-    }
-    if ($null -eq $main) { return @{ State = 'missing' } }
-    return @{ State = 'ready'; Window = $main }
+    [EditorSnapshot]::Capture($child.Id, 'AIOS test editor', ($Toolkit -eq 'winforms'))
 }
 
 function Wait-State($expected) {
@@ -127,28 +119,16 @@ function Wait-State($expected) {
         if ($observation.State -eq $expected) { return }
         Start-Sleep -Milliseconds 60
     } while ([DateTime]::UtcNow -lt $deadline)
-    $roots = @(Find-Elements ([Windows.Automation.AutomationElement]::RootElement) ([Windows.Automation.AutomationElement]::ProcessIdProperty) $child.Id Children)
-    $names = @($roots | ForEach-Object { $_.Current.Name }) -join ', '
-    throw "Timed out waiting for $expected, last state $($observation.State), windows [$names]"
+    throw "Timed out waiting for $expected, last state $($observation.State)"
 }
 
-function Get-Pattern($window, $name, $pattern) {
-    $matchesFound = @(foreach ($candidate in (Find-Elements $window ([Windows.Automation.AutomationElement]::NameProperty) $name Descendants)) {
-        $supported = $null
-        if ($candidate.TryGetCurrentPattern($pattern, [ref]$supported)) { $supported }
-    })
-    if ($matchesFound.Count -ne 1) { throw "Missing or ambiguous $name" }
-    $matchesFound[0]
-}
-
-. (Join-Path $PSScriptRoot '../runtime/windows_text.ps1')
 $clockOption = if ($LatencyReport) { '-Clock' } else { '' }
 
 $child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Toolkit $Toolkit -Editor $clockOption"
 try {
     Wait-State ready
     if ($LatencyReport) {
-        $control = Get-DocumentControl (Get-State).Window $Toolkit
+        $control = Get-State
         $trigger = [Threading.EventWaitHandle]::OpenExisting("Local\AIOS-clock-$($child.Id)")
         $observed = try {
             foreach ($index in 1..100) {
@@ -184,8 +164,7 @@ try {
         if ($line -eq 'observe') {
             $nodes = @()
             if ($observation.State -eq 'ready') {
-                $control = Get-DocumentControl $observation.Window $Toolkit
-                $null = Get-Pattern $observation.Window 'Save' ([Windows.Automation.InvokePattern]::Pattern)
+                $control = $observation
                 $nodes = @(
                     @{element_id='body'; name='Document'; role='textbox'; actions=@('append');
                       value=(Read-DocumentValue $control).Replace("`r`n", "`n")}
@@ -196,20 +175,19 @@ try {
             continue
         }
         if ($observation.State -ne 'ready') { [Console]::WriteLine("blocked-$($observation.State)"); continue }
-        $main = $observation.Window
         if ($line.StartsWith('append ')) {
-            $control = Get-DocumentControl $main $Toolkit
+            $control = $observation
             $expected = (Read-DocumentValue $control) + "`r`n" + $line.Substring(7)
             if ($Toolkit -eq 'winforms') {
                 [NativeEditorText]::Write($control.Handle, $expected)
             } else {
-                $control.Pattern.SetValue($expected)
+                $control.Text.SetValue($expected)
             }
             [void](Wait-DocumentValue $control $expected)
         } elseif ($line -eq 'save') {
-            (Get-Pattern $main 'Save' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            $observation.Save.Invoke()
         } elseif ($line -eq 'inject-modal') {
-            (Get-Pattern $main 'Open modal' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            $observation.OpenModal.Invoke()
             Wait-State dialog
             [Console]::WriteLine('injected')
             continue

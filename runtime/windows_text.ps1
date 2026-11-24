@@ -29,25 +29,9 @@ public static class NativeEditorText {
 '@
 }
 
-function Get-DocumentControl($window, $toolkitName) {
-    $scope = [Windows.Automation.TreeScope]::Descendants
-    if ($toolkitName -eq 'winforms') {
-        Initialize-NativeEditorText
-        $fields = @($window.FindAll($scope, [Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.ClassName -match 'EDIT' -and $_.Current.NativeWindowHandle -ne 0 })
-        if ($fields.Count -ne 1) { throw 'Expected one native edit control' }
-        return @{ Handle = $fields[0].Current.NativeWindowHandle }
-    }
-    $condition = [Windows.Automation.PropertyCondition]::new(
-        [Windows.Automation.AutomationElement]::NameProperty, 'Document')
-    $fields = @($window.FindAll($scope, $condition))
-    if ($fields.Count -ne 1) { throw 'Expected one document control' }
-    return @{ Pattern = $fields[0].GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern) }
-}
-
 function Read-DocumentValue($control) {
-    if ($control.ContainsKey('Handle')) { return [NativeEditorText]::Read($control.Handle) }
-    return $control.Pattern.Current.Value
+    if ($control.Handle -ne 0) { return [NativeEditorText]::Read($control.Handle) }
+    return $control.Text.Current.Value
 }
 
 function Wait-DocumentValue($control, [string]$expected) {
