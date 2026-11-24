@@ -80,6 +80,8 @@ python3 arm64_model.py work.raw --show
 
 ### 플립4 커널로 가상 메모장 실행
 
+내장 한국어 명령은 모델 서버 없이 게스트 안에서 처리합니다. `python3 flip4_model.py work.raw --offline --interactive`를 실행한 뒤 `장보기 메모에 '사과 두 개' 추가해 줘.` 또는 `메모 보여줘`를 입력합니다. 추가할 본문은 따옴표로 감쌉니다. 지원 범위는 메모 한 줄 추가와 조회이며, 빈 줄을 입력하면 종료됩니다.
+
 GitHub Actions의 **Flip4 reference kernel probe** 실행에서 `flip4-virtual-disk`를 받아 압축을 풉니다. 묶음에는 플립4 커뮤니티 커널, ext4 디스크, Python 실행기가 들어 있습니다. Linux에서 Python 3과 `qemu-system-aarch64`를 설치한 뒤 묶음 폴더에서 실행합니다.
 
 ```sh

@@ -180,6 +180,36 @@ fn document_page(text: &str, revision: &str, request: &str) -> Option<serde_json
 }
 
 #[cfg(target_os = "linux")]
+fn korean_append(instruction: &str) -> Option<&str> {
+    let instruction = instruction.trim().trim_end_matches('.');
+    let tail = [
+        "장보기 메모에 ",
+        "장보기 메모 마지막에 ",
+        "메모에 ",
+        "메모 끝에 ",
+    ]
+    .iter()
+    .find_map(|prefix| instruction.strip_prefix(prefix))?;
+    let quoted = [" 한 줄을 추가해 줘", " 추가해 줘", " 추가해줘"]
+        .iter()
+        .find_map(|suffix| tail.strip_suffix(suffix))?;
+    for (left, right) in [('\'', '\''), ('"', '"'), ('‘', '’')] {
+        if let Some(text) = quoted
+            .strip_prefix(left)
+            .and_then(|s| s.strip_suffix(right))
+        {
+            if !text.trim().is_empty()
+                && !text.contains([left, right])
+                && !text.chars().any(char::is_control)
+            {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
 fn document_console() -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
     use std::io::BufRead;
@@ -231,8 +261,27 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             }
             continue;
         }
-        let Some((revision, text)) = line.strip_prefix("append ").and_then(|r| r.split_once(' '))
-        else {
+        let edit = if let Some(request) = line.strip_prefix("korean ") {
+            let Some((revision, instruction)) = request.split_once(' ') else {
+                println!("AIOS_REJECT invalid-request");
+                continue;
+            };
+            if revision != observed {
+                println!("AIOS_REJECT invalid-edit");
+                continue;
+            }
+            if matches!(
+                instruction.trim().trim_end_matches('.'),
+                "메모 보여줘" | "메모 보여 줘" | "장보기 메모 보여줘"
+            ) {
+                println!("AIOS_READ revision={observed}");
+                continue;
+            }
+            korean_append(instruction).map(|text| (revision, text))
+        } else {
+            line.strip_prefix("append ").and_then(|r| r.split_once(' '))
+        };
+        let Some((revision, text)) = edit else {
             println!("AIOS_REJECT invalid-request");
             continue;
         };

@@ -49,6 +49,14 @@ jobs:
           cd build/flip4
           sha256sum -c SHA256SUMS
           cp starter.raw work.raw
+          cp starter.raw offline.raw
+          printf '%s\n' "장보기 메모에 '사과 두 개' 추가해 줘." '메모 보여줘' '' |
+            timeout 60s python3 flip4_model.py offline.raw --offline --interactive > offline.jsonl
+          jq -se 'length == 2 and .[0].text == "장보기\n사과 두 개" and .[0] == .[1]' offline.jsonl
+          if timeout 60s python3 flip4_model.py offline.raw --offline --instruction "메모 삭제해 줘" > /dev/null 2> reject.log; then exit 1; fi
+          grep -F 'AIOS_REJECT invalid-request' reject.log
+          timeout 60s python3 flip4_model.py offline.raw --show > offline-reopened.json
+          tail -1 offline.jsonl | cmp - offline-reopened.json
           bash ../../scripts/with-local-model.sh bash -eu <<'CHECK'
           timeout 180s python3 ../../tests/flip4_disk.py . work.raw .
           timeout 180s python3 flip4_model.py work.raw --instruction "메모 끝에 '빵' 한 줄을 추가해 줘." > edited.json
@@ -63,4 +71,5 @@ jobs:
           name: flip4-model-result
           path: |
             build/flip4/proof.json
+            build/flip4/offline.jsonl
             build/flip4/disk-*.log

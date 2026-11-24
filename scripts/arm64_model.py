@@ -101,6 +101,7 @@ def main(launch=None):
     action.add_argument("--interactive", action="store_true", help="edit repeatedly until a blank line or EOF")
     action.add_argument("--show", action="store_true", help="print the persisted document")
     parser.add_argument("--model-port", type=int, default=18080)
+    parser.add_argument("--offline", action="store_true", help="use built-in Korean memo commands in the guest")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
     if not args.disk.is_file() or args.disk.samefile(launcher.with_name("starter.raw")):
@@ -117,7 +118,14 @@ def main(launch=None):
             for instruction in requests(args):
                 info = command(vm, log, "inspect", "AIOS_DOCUMENT ")
                 revision = info.split()[1].split("=")[1]
-                if instruction is not None:
+                if instruction is not None and args.offline:
+                    if not instruction.isprintable() or len(instruction.encode()) > 3900:
+                        raise ValueError("Expected a single printable instruction under 3901 bytes")
+                    reply = command(vm, log, f"korean {revision} {instruction}", "AIOS_")
+                    if not reply.startswith(("AIOS_SAVED revision=", "AIOS_READ revision=")):
+                        raise ValueError(reply)
+                    revision = reply.split("=", 1)[1]
+                elif instruction is not None:
                     saved, _ = edit(vm, log, args.model_port, instruction, revision)
                     revision = saved["revision"]
                 result = read_document(vm, revision)
