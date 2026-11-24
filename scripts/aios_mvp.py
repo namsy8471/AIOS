@@ -47,10 +47,15 @@ def boot(qemu, iso, disk, console, usb_uefi=None):
             ready = threading.Event()
             def capture():
                 with console.open("wb") as log, console_channel.makefile("rb") as stream:
-                    for data in stream:
-                        log.write(data)
-                        if b"AIOS_RUNTIME_READY transport=serial" in data:
-                            ready.set()
+                    try:
+                        for data in stream:
+                            log.write(data)
+                            if b"AIOS_RUNTIME_READY transport=serial" in data:
+                                log.flush()
+                                ready.set()
+                    except ConnectionResetError:
+                        # QEMU can reset the socket on exit. The caller checks the shutdown marker.
+                        pass
             thread = console_channel = None
             deadline = time.monotonic() + 240
             try:
