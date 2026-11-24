@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 // The same sequence and file oracle run against each native editor.
 fn exercise(toolkit: &str, mut adapter: Command) {
+    eprintln!("Testing {toolkit} editor");
     let dir = std::env::temp_dir().join(format!("aios-{toolkit}-{}", std::process::id()));
     fs::create_dir(&dir).unwrap();
     let file = dir.join("document.txt");
@@ -62,7 +63,17 @@ fn linux_editors() {
 #[test]
 #[ignore = "requires an interactive Windows desktop"]
 fn windows_editor() {
-    let mut adapter = Command::new("powershell");
-    adapter.args(["-NoProfile", "-STA", "-File", "tests/windows_editor.ps1"]);
-    exercise("wpf", adapter);
+    for toolkit in ["wpf", "winforms"] {
+        let mut adapter = Command::new("powershell");
+        adapter.args([
+            "-NoProfile",
+            "-STA",
+            "-File",
+            "tests/windows_editor.ps1",
+            "-Toolkit",
+            toolkit,
+            "-Document",
+        ]);
+        exercise(toolkit, adapter);
+    }
 }

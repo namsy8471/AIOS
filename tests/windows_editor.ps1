@@ -1,9 +1,38 @@
-param([Parameter(Mandatory)][string]$Document, [switch]$Editor)
+param([Parameter(Mandatory)][string]$Document,
+      [ValidateSet('wpf','winforms')][string]$Toolkit = 'wpf', [switch]$Editor)
 
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName PresentationFramework, UIAutomationClient, UIAutomationTypes
+
+if ($Editor -and $Toolkit -eq 'winforms') {
+    Add-Type -AssemblyName System.Windows.Forms
+    $form = [Windows.Forms.Form]::new()
+    $form.Text = 'AIOS test editor'
+    $body = [Windows.Forms.TextBox]::new()
+    $body.Multiline = $true
+    $body.AccessibleName = 'Document'
+    $body.Text = [IO.File]::ReadAllText($Document)
+    $save = [Windows.Forms.Button]::new()
+    $save.Text = 'Save'
+    $save.Add_Click({
+        [IO.File]::WriteAllText($Document, $body.Text.Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
+    })
+    $inject = [Windows.Forms.Button]::new()
+    $inject.Text = 'Open modal'
+    $inject.Add_Click({
+        $dialog = [Windows.Forms.Form]::new()
+        $dialog.Text = 'Save document'
+        try { [void]$dialog.ShowDialog($form) } finally { $dialog.Dispose() }
+    })
+    $layout = [Windows.Forms.FlowLayoutPanel]::new()
+    $layout.Dock = 'Fill'
+    foreach ($item in $body, $save, $inject) { $layout.Controls.Add($item) }
+    $form.Controls.Add($layout)
+    [Windows.Forms.Application]::Run($form)
+    exit
+}
 
 if ($Editor) {
     $window = [Windows.Window]::new()
@@ -74,7 +103,7 @@ function Get-Pattern($window, $name, $pattern) {
     $matchesFound[0]
 }
 
-$child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Editor"
+$child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Toolkit $Toolkit -Editor"
 try {
     Wait-State ready
     [Console]::WriteLine('ready')
