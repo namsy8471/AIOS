@@ -15,5 +15,5 @@ static int touch_rank(const char *name, int type_b, enum panel_priority panel) {
         return 0;
     if (!strcmp(name, "sec_touchscreen"))
         return panel == PANEL_FLIP4_INNER && type_b ? 3 : 0;
-    return type_b ? 2 : 1;
+    return panel == PANEL_FLIP4_INNER ? 0 : (type_b ? 2 : 1);
 }

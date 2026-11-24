@@ -566,6 +566,10 @@ impl DisplaySession {
         use std::process::{Command, Stdio};
 
         if session.is_none() {
+            if !Path::new("/sys/class").is_dir() {
+                mount_virtual_fs(c"sysfs", c"/sys")?;
+            }
+            hardware::prepare_display_nodes()?;
             let mut child = Command::new("/usr/bin/display-frame")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

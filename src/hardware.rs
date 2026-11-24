@@ -1,6 +1,10 @@
 //! Read the Linux device inventory without opening graphics or input devices.
 use serde_json::{Value, json};
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    os::unix::fs::{FileTypeExt, MetadataExt},
+    path::Path,
+};
 
 fn entries(root: &str) -> io::Result<Vec<fs::DirEntry>> {
     let mut items = match fs::read_dir(root) {
@@ -84,12 +88,7 @@ pub fn device_numbers() -> io::Result<Value> {
     ] {
         let mut devices = Vec::new();
         for entry in entries(class)? {
-            let Some(numbers) = text(&entry.path().join("dev")) else {
-                continue;
-            };
-            let Some((major, minor)) = numbers.split_once(':').and_then(|(major, minor)| {
-                Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
-            }) else {
+            let Some((major, minor)) = device_number(&entry.path()) else {
                 continue;
             };
             if let Some(name) = entry.file_name().to_str() {
@@ -100,4 +99,50 @@ pub fn device_numbers() -> io::Result<Value> {
         report.insert(kind.to_owned(), Value::Array(devices));
     }
     Ok(Value::Object(report))
+}
+
+fn device_number(sysfs: &Path) -> Option<(u32, u32)> {
+    let numbers = text(&sysfs.join("dev"))?;
+    let (major, minor) = numbers.split_once(':')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// Populate the display device nodes when the initramfs has no devtmpfs.
+pub fn prepare_display_nodes() -> io::Result<()> {
+    for (class, output, prefix) in [
+        ("/sys/class/drm", "/dev/dri", "card"),
+        ("/sys/class/input", "/dev/input", "event"),
+    ] {
+        fs::create_dir_all(output)?;
+        for entry in entries(class)? {
+            let name = entry.file_name();
+            let Some(index) = name.to_str().and_then(|name| name.strip_prefix(prefix)) else {
+                continue;
+            };
+            if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            let Some((major, minor)) = device_number(&entry.path()) else {
+                continue;
+            };
+            let path = Path::new(output).join(name);
+            let number = libc::makedev(major, minor);
+            match fs::symlink_metadata(&path) {
+                Ok(info) if info.file_type().is_char_device() && info.rdev() == number => continue,
+                Ok(_) => {
+                    return Err(io::Error::other(format!(
+                        "invalid device node {}",
+                        path.display()
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            let path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
+            if unsafe { libc::mknod(path.as_ptr(), libc::S_IFCHR | 0o600, number) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(())
 }

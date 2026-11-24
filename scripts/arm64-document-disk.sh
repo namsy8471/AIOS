@@ -50,9 +50,6 @@ curl -fsSL --retry 3 "$font_source/OFL.txt" -o "$fonts/OFL.txt"
 while IFS= read -r library; do
   install -Dm755 "$library" "$stage/root$library"
 done < <(ldd "$stage/root/usr/bin/display-frame" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u)
-mkdir "$stage/root/dev/dri" "$stage/root/dev/input"
-mknod -m 600 "$stage/root/dev/dri/card0" c 226 0
-mknod -m 600 "$stage/root/dev/input/event0" c 13 64
 truncate -s 48M "$stage/display.raw"
 mkfs.ext4 -q -F -d "$stage/root" "$stage/display.raw"
 cp "$stage/display.raw" "$stage/multitouch.raw"

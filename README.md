@@ -140,7 +140,7 @@ python3 flip4_model.py work.raw --show
 
 ### ARM64 그래픽 메모장
 
-**Boot and save contract** 수동 실행의 `aios-arm64-display-package`를 압축 해제합니다. Python과 SDL을 지원하는 QEMU가 실행 경로에 있으면 묶음 폴더에서 `python arm64_touch.py work.raw`를 실행합니다. 터미널에서 추가할 문구를 입력하고 QEMU 창에서 저장 또는 취소를 선택합니다. 빈 줄로 종료한 뒤 같은 작업 디스크로 다시 열면 저장된 메모가 먼저 표시됩니다. 이 그래픽 묶음은 Alpine 커널과 VirtIO 가상 그래픽을 사용합니다.
+**Boot and save contract** 수동 실행의 `aios-arm64-display-package`를 압축 해제합니다. Python과 SDL을 지원하는 QEMU가 실행 경로에 있으면 묶음 폴더에서 `python arm64_touch.py work.raw`를 실행합니다. 터미널에서 추가할 문구를 입력하고 QEMU 창에서 저장 또는 취소를 선택합니다. 빈 줄로 종료한 뒤 같은 작업 디스크로 다시 열면 저장된 메모가 먼저 표시됩니다. 이 그래픽 묶음은 Alpine 커널과 VirtIO 가상 그래픽을 사용합니다. 화면을 처음 열 때 AIOS는 sysfs의 장치 번호로 필요한 DRM·입력 장치 파일을 준비합니다. 화면 프로그램은 연결된 DRM 출력을 검색하며, 1080×2640 DSI 안쪽 화면에서는 삼성 안쪽 터치 장치의 단일 손가락 입력을 사용합니다.
 
 `/opt/model`에 모델과 실행기가 들어 있는 신뢰할 수 있는 ext4 이미지를 가지고 있다면 `python arm64_touch.py work.raw --model-source model.raw`로 연결합니다. 모델 디스크는 읽기 전용으로 연결되며 메모는 `work.raw`에 저장됩니다. 화면 확인을 요청하면 로컬 모델이 `append_line` JSON 도구를 제안합니다. AIOS가 대상 메모와 현재 문서 해시를 붙이고, 터치 후 저장 직전에 문서가 바뀌었는지 확인합니다. 수동 워크플로의 모델·화면 검증은 실제 모델의 두 제안에 대해 터치 취소와 승인을 각각 실행하고, 메모 복원 및 모델 디스크의 SHA-256을 대조합니다.
 
