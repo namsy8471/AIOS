@@ -26,10 +26,17 @@ $properties = [ordered]@{}
 foreach ($key in @('ro.product.model', 'ro.product.device', 'ro.build.display.id',
                    'ro.build.version.release', 'ro.build.version.security_patch',
                    'ro.bootloader', 'ro.product.cpu.abilist', 'ro.boot.flash.locked',
-                   'ro.boot.verifiedbootstate', 'ro.boot.vbmeta.device_state')) {
+                   'ro.boot.verifiedbootstate', 'ro.boot.vbmeta.device_state',
+                   'ro.boot.hardware', 'ro.boot.revision', 'ro.boot.dtb_idx', 'ro.boot.dtbo_idx')) {
     $properties[$key] = Read-DeviceValue @('getprop', $key)
 }
 $properties['kernel_release'] = Read-DeviceValue @('uname', '-r')
+$soc = [ordered]@{}
+foreach ($key in @('soc_id', 'revision', 'machine', 'family')) {
+    $value = Read-DeviceValue @("if [ -r /sys/devices/soc0/$key ]; then cat /sys/devices/soc0/$key; fi")
+    $soc[$key] = if ($value) { $value } else { $null }
+}
+$properties['soc'] = $soc
 $board = [ordered]@{}
 foreach ($key in @('qcom,board-id', 'qcom,msm-id', 'dtbo-hw_rev', 'dtbo-hw_rev_end')) {
     # Device-tree cells are big-endian. Keep the original byte order for

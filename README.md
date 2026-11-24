@@ -63,6 +63,8 @@ GTK 측정에는 편집기 시작과 저장 확인이 포함됩니다. 두 경�
 
 플립4의 공개 복구 이미지에 포함된 `dtbo.img`를 분석하면 B4Q 하드웨어 오버레이가 10개 있습니다. 그 파일의 `dtbo-hw_rev`부터 `dtbo-hw_rev_end`까지를 포함 범위로 읽으면 `waipio` 항목은 0·1·3, `cape` 항목은 2·5·6·7·8·9·10–32입니다. 4에 해당하는 항목은 이 파일에서 확인되지 않습니다. 실기기의 펌웨어와 보드 정보를 확보한 뒤 해당 펌웨어의 오버레이와 대조해야 합니다. 연결 정보 수집기는 Android에서 읽을 수 있는 경우 보드 ID와 하드웨어 리비전을 원래 바이트 순서의 16진수로 기록합니다. [분석한 커뮤니티 DTBO](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/prebuilt/dtbo.img)
 
+연결한 `SM-F721N`의 Android는 `CAPE`, SoC ID `530`, 보드 리비전 `13`, DTB 인덱스 `0`, DTBO 인덱스 `9`를 보고했습니다. 커뮤니티 복구 이미지의 DTB 0번도 `CAPE`와 ID `530`을 선언하고, DTBO 9번은 같은 SoC의 리비전 `10–32`를 대상으로 합니다. 이 대조는 참조 기기 트리 후보를 좁힙니다. 실기 펌웨어의 기기 트리 및 부팅 호환성은 별도 검증 대상입니다. [Android 기기 트리 테이블 형식](https://source.android.com/docs/core/architecture/dto/partitions)
+
 플립4 실기기 준비에는 세부 모델, 펌웨어 빌드, 실행 중인 커널 버전이 필요합니다. Windows에서 USB 디버깅을 이미 허용한 기기가 한 대 연결되어 있으면 `scripts/flip4-inventory.ps1`로 해당 값을 읽을 수 있습니다. PC에서 조사한 커뮤니티 플립4 복구 환경의 설정은 ARM64, 부팅 헤더 v2, 페이지 크기 4096을 사용합니다. 실물 펌웨어와 일치하는지는 별도 확인이 필요합니다. [플립4 복구 보드 설정](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/BoardConfig.mk)
 
 AIOS 문서 작업자는 Landlock ABI 3 이상을 요구합니다. 조사한 SM8475 커뮤니티 커널 소스는 5.10.226이며 해당 커밋의 보안 서브시스템과 ARM64용 공통 시스템 호출 목록에서 Landlock 구현을 찾지 못했습니다. Linux에서 `aios kernel-capabilities`를 실행하거나 AIOS ARM64 콘솔에 `kernel-capabilities`를 입력하면 현재 커널에서 관측한 ABI와 조회 오류 번호를 확인할 수 있습니다. [커널 버전](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/Makefile) · [보안 서브시스템](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/tree/b04999acacba1a4f7797cb7d402b0fefe153bba9/security)
