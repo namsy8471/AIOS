@@ -13,6 +13,7 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     $form.AccessibleName = 'AIOS test editor'
     $body = [Windows.Forms.TextBox]::new()
     $body.Multiline = $true
+    $body.Name = 'documentBody'
     $body.AccessibleName = 'Document'
     $body.Text = [IO.File]::ReadAllText($Document)
     $save = [Windows.Forms.Button]::new()
@@ -139,8 +140,12 @@ try {
         $main = $observation.Window
         if ($line.StartsWith('append ')) {
             if ($Toolkit -eq 'winforms') {
-                $fields = @(Find-Elements $main ([Windows.Automation.AutomationElement]::ControlTypeProperty) ([Windows.Automation.ControlType]::Edit) Descendants)
-                if ($fields.Count -ne 1 -or $fields[0].Current.Name -ne 'Document') { throw 'Missing document field' }
+                $all = $main.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+                $fields = @($all | Where-Object { $_.Current.ClassName -match 'EDIT' -and $_.Current.NativeWindowHandle -ne 0 })
+                if ($fields.Count -ne 1) {
+                    $tree = @($all | ForEach-Object { "$($_.Current.Name) [$($_.Current.ClassName)]" }) -join ', '
+                    throw "Missing or ambiguous native edit control: $tree"
+                }
                 [NativeEditorText]::Append($fields[0].Current.NativeWindowHandle, $line.Substring(7))
             } else {
                 $value = Get-Pattern $main 'Document' ([Windows.Automation.ValuePattern]::Pattern)

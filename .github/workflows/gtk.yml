@@ -10,10 +10,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the Rust integration test
         run: cargo test --locked --no-run
-      - name: Observe a GTK save dialog and check the file
+      - name: Install accessibility and GUI test packages
         run: |
           sudo apt-get -o Acquire::Retries=1 update -qq
           sudo apt-get install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt5 xvfb xauth dbus-x11
+      - name: Observe dialogs and drive real editor saves
+        timeout-minutes: 2
+        run: |
           PATH="/usr/bin:$PATH" GTK_A11Y=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked gtk_modal_blocks_save -- --ignored --nocapture
           PATH="/usr/bin:$PATH" QT_QPA_PLATFORM=xcb QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked --test editor_task -- --ignored --nocapture
   windows:
