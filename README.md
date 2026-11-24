@@ -88,7 +88,7 @@ Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플
 
 ### 플립4 커널로 가상 메모장 실행
 
-게스트 내부에서 Qwen2.5-0.5B 추론을 실행하려면 같은 워크플로 실행의 `flip4-guest-model-disk`와 `flip4-virtual-disk`를 한 폴더에 풉니다. Linux에서 `sha256sum -c MODEL_SHA256SUMS`로 검사하고 `cp model.raw work.raw`로 작업용 디스크를 만듭니다. `python3 flip4_model.py work.raw --guest-model --instruction "메모에 '우유'를 적어줘."`를 실행하면 게스트가 본문 한 줄을 추출해 저장합니다. 표준 오류의 `inference_ms`는 모델 프로세스 시작부터 결과 검증까지의 게스트 경과 시간이며, `model_peak_rss_kib`는 해당 프로세스의 최대 상주 메모리입니다. 종료 후 `python3 flip4_model.py work.raw --show`로 저장 내용을 읽습니다.
+게스트 내부에서 Qwen2.5-0.5B 추론을 실행하려면 같은 워크플로 실행의 `flip4-guest-model-disk`와 `flip4-virtual-disk`를 한 폴더에 풉니다. Linux에서 `sha256sum -c MODEL_SHA256SUMS`로 검사하고 `cp split-model-starter.raw work.raw`로 작업용 디스크를 만듭니다. `python3 flip4_model.py work.raw --split-disk --guest-model --instruction "메모에 '우유'를 적어줘."`를 실행하면 게스트가 읽기 전용 시스템의 모델을 사용하고 별도 문서 파티션에 결과를 저장합니다. 표준 오류의 `inference_ms`는 모델 프로세스 시작부터 결과 검증까지의 게스트 경과 시간이며, `model_peak_rss_kib`는 해당 프로세스의 최대 상주 메모리입니다. 종료 후 `python3 flip4_model.py work.raw --split-disk --show`로 저장 내용을 읽습니다.
 
 내장 한국어 명령은 모델 서버 없이 게스트 안에서 처리합니다. `python3 flip4_model.py work.raw --offline --interactive`를 실행한 뒤 `장보기 메모에 '사과 두 개' 추가해 줘.` 또는 `메모 보여줘`를 입력합니다. 추가할 본문은 따옴표로 감쌉니다. 지원 범위는 메모 한 줄 추가와 조회이며, 빈 줄을 입력하면 종료됩니다.
 

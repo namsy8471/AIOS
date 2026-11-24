@@ -101,29 +101,33 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4
-      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build
-      - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/model.raw
+      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build parted
+      - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/split-model-starter.raw
       - name: Infer and save in the disconnected ARM64 guest
         run: |
           cd build/flip4
-          cp --sparse=always model.raw inference-work.raw
+          cp --sparse=always split-model-starter.raw inference-work.raw
           printf '%s\n' "장보기 메모에 '사과 두 개' 추가해 줘." "메모에 '우유'를 적어줘." "메모 보여줘" '' |
-            timeout 600s python3 flip4_model.py inference-work.raw --guest-model --interactive > inferred.jsonl 2> usage.json
+            timeout 600s python3 flip4_model.py inference-work.raw --split-disk --guest-model --interactive > inferred.jsonl 2> usage.json
           jq -se 'length == 3 and .[0].text == "장보기\n사과 두 개" and .[1].text == "장보기\n사과 두 개\n우유" and .[1] == .[2]' inferred.jsonl
           jq -se 'length == 1 and .[0].model_peak_rss_kib > 0 and .[0].inference_ms > 0' usage.json
-          timeout 60s python3 flip4_model.py inference-work.raw --show > reopened.json
+          timeout 60s python3 flip4_model.py inference-work.raw --split-disk --show > reopened.json
           tail -1 inferred.jsonl | cmp - reopened.json
+          system_sha() { dd if="$1" bs=1M skip=1 count=768 status=none | sha256sum; }
+          system_sha split-model-starter.raw > system.sha256
+          system_sha inference-work.raw | cmp - system.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference
           path: |
             build/flip4/inferred.jsonl
             build/flip4/usage.json
-      - run: cd build/flip4 && sha256sum model.raw > MODEL_SHA256SUMS
+            build/flip4/system.sha256
+      - run: cd build/flip4 && sha256sum split-model-starter.raw > MODEL_SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-model-disk
           retention-days: 7
           path: |
-            build/flip4/model.raw
+            build/flip4/split-model-starter.raw
             build/flip4/MODEL_SHA256SUMS

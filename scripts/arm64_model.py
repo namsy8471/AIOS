@@ -125,7 +125,7 @@ def main(launch=None):
         parser.add_argument("--split-disk", action="store_true", help="boot the disk with a separate read-only system partition")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
-    starters = [launcher.with_name(name) for name in ("starter.raw", "split-starter.raw")]
+    starters = [launcher.with_name(name) for name in ("starter.raw", "split-starter.raw", "split-model-starter.raw")]
     if not args.disk.is_file() or any(path.is_file() and args.disk.samefile(path) for path in starters):
         parser.error("provide a separate working disk")
     if args.instruction is not None and not args.instruction.strip():
