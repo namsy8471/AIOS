@@ -66,9 +66,12 @@ function Wait-State($expected) {
 }
 
 function Get-Pattern($window, $name, $pattern) {
-    $matchesFound = @(Find-Elements $window ([Windows.Automation.AutomationElement]::NameProperty) $name Descendants)
+    $matchesFound = @(foreach ($candidate in (Find-Elements $window ([Windows.Automation.AutomationElement]::NameProperty) $name Descendants)) {
+        $supported = $null
+        if ($candidate.TryGetCurrentPattern($pattern, [ref]$supported)) { $supported }
+    })
     if ($matchesFound.Count -ne 1) { throw "Missing or ambiguous $name" }
-    $matchesFound[0].GetCurrentPattern($pattern)
+    $matchesFound[0]
 }
 
 $child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Editor"
