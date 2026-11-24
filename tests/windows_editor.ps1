@@ -108,6 +108,27 @@ function Get-Pattern($window, $name, $pattern) {
     $matchesFound[0]
 }
 
+if ($Toolkit -eq 'winforms') {
+    Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Accessibility;
+public static class NativeEditorText {
+    [DllImport("oleacc.dll")]
+    private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint objectId,
+        ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IAccessible result);
+    public static void Append(int hwnd, string line) {
+        var iid = typeof(IAccessible).GUID;
+        IAccessible text;
+        Marshal.ThrowExceptionForHR(AccessibleObjectFromWindow(new IntPtr(hwnd), 0xfffffffc, ref iid, out text));
+        try {
+            text.set_accValue(0, text.get_accValue(0) + "\r\n" + line);
+        } finally { Marshal.ReleaseComObject(text); }
+    }
+}
+'@
+}
+
 $child = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -STA -File `"$PSCommandPath`" -Document `"$Document`" -Toolkit $Toolkit -Editor"
 try {
     Wait-State ready
@@ -117,8 +138,14 @@ try {
         if ($observation.State -ne 'ready') { [Console]::WriteLine("blocked-$($observation.State)"); continue }
         $main = $observation.Window
         if ($line.StartsWith('append ')) {
-            $value = Get-Pattern $main 'Document' ([Windows.Automation.ValuePattern]::Pattern)
-            $value.SetValue($value.Current.Value + "`r`n" + $line.Substring(7))
+            if ($Toolkit -eq 'winforms') {
+                $fields = @(Find-Elements $main ([Windows.Automation.AutomationElement]::ControlTypeProperty) ([Windows.Automation.ControlType]::Edit) Descendants)
+                if ($fields.Count -ne 1 -or $fields[0].Current.Name -ne 'Document') { throw 'Missing document field' }
+                [NativeEditorText]::Append($fields[0].Current.NativeWindowHandle, $line.Substring(7))
+            } else {
+                $value = Get-Pattern $main 'Document' ([Windows.Automation.ValuePattern]::Pattern)
+                $value.SetValue($value.Current.Value + "`r`n" + $line.Substring(7))
+            }
         } elseif ($line -eq 'save') {
             (Get-Pattern $main 'Save' ([Windows.Automation.InvokePattern]::Pattern)).Invoke()
         } elseif ($line -eq 'inject-modal') {
