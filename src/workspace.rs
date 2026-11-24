@@ -2,7 +2,7 @@
 use rustix::fs::{CWD, RenameFlags, renameat_with};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
@@ -81,8 +81,45 @@ fn btrfs(operation: &str, paths: &[&Path]) -> io::Result<()> {
     Ok(())
 }
 
+// The trusted broker owns this pipe. The sandboxed editor has null stdin/stdout.
+fn review(interrupted: &AtomicUsize) -> io::Result<u8> {
+    let mut output = io::stdout().lock();
+    writeln!(output, "AIOS_REVIEW_READY")?;
+    output.flush()?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut input = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    while interrupted.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+        let ready = unsafe { libc::poll(&mut input, 1, 100) };
+        if ready < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+        if ready > 0 {
+            let mut decision = [0];
+            return Ok(
+                if io::stdin().read(&mut decision)? == 1 && decision == *b"Y" {
+                    0
+                } else {
+                    43
+                },
+            );
+        }
+    }
+    Ok(43)
+}
+
 pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Result<ExitCode> {
-    if args.len() < 3 || args[1] != "--" {
+    let reviewed = matches!(agent, Some(crate::agent::Profile::Desktop))
+        && args.get(1).is_some_and(|arg| arg == "--review");
+    let separator = if reviewed { 2 } else { 1 };
+    if args.len() <= separator + 1 || args[separator] != "--" {
         return Err(io::Error::other(
             "usage: aios workspace-run PATH -- PROGRAM [ARG...]",
         ));
@@ -121,7 +158,14 @@ pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Resul
     eprintln!("checkpoint_us={}", start.elapsed().as_micros());
     // The workload is PID 1 in its own PID namespace. Linux tears down all
     // remaining processes there when PID 1 exits, including detached writers.
-    let result = run_worker(&branch, &args[2..], &interrupted, agent);
+    let result =
+        run_worker(&branch, &args[separator + 1..], &interrupted, agent).and_then(|code| {
+            if reviewed && code == 0 {
+                review(&interrupted)
+            } else {
+                Ok(code)
+            }
+        });
     let signal = interrupted.load(Ordering::SeqCst);
     let accepted = signal == 0 && matches!(result, Ok(0));
     let start = Instant::now();

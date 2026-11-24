@@ -56,13 +56,24 @@ with tempfile.TemporaryDirectory() as temp:
                     def send(body):
                         message = dict(jsonrpc="2.0", **body)
                         sock.sendall(json.dumps(message).encode() + b"\n")
-                    def rpc(number, method, params):
+                    def rpc(number, method, params, review_action=None):
                         send(dict(id=number, method=method, params=params))
+                        reviewed = False
                         while True:
                             reply = json.loads(stream.readline())
+                            if reply.get("method") == "elicitation/create":
+                                assert review_action and not reviewed
+                                assert "note.txt" in reply["params"]["message"]
+                                reviewed = True
+                                decision = dict(action=review_action)
+                                if review_action == "accept":
+                                    decision["content"] = {"save": True}
+                                send(dict(id=reply["id"], result=decision))
+                                continue
                             if reply.get("id") == number:
+                                assert reviewed == bool(review_action), reply
                                 return reply["result"]
-                    rpc(1, "initialize", dict(protocolVersion="2025-03-26", capabilities={},
+                    rpc(1, "initialize", dict(protocolVersion="2025-11-25", capabilities={"elicitation": {"form": {}}},
                                               clientInfo=dict(name="aios-test", version="1")))
                     send(dict(method="notifications/initialized"))
                     state = rpc(2, "tools/call", dict(name="inspect_document", arguments={}))
@@ -73,6 +84,18 @@ with tempfile.TemporaryDirectory() as temp:
                     result = rpc(3, "tools/call", request)
                     assert result.get("structuredContent", {}).get("revision") == hashlib.sha256(expected).hexdigest(), result
                     assert rpc(4, "tools/call", request)["isError"]
+                    current = hashlib.sha256(expected).hexdigest()
+                    qt = dict(document="note.txt", revision=current, editor="qt", review=True)
+                    canceled = rpc(5, "tools/call", dict(name="append_line", arguments={
+                        **qt, "line": "취소할 줄"}), "cancel")
+                    assert canceled["isError"] and "discarded" in str(canceled), canceled
+                    state = rpc(6, "tools/call", dict(name="inspect_document", arguments={}))
+                    assert state["structuredContent"]["revision"] == current
+                    appended = "Qt에서 확인하고 저장"
+                    saved = rpc(7, "tools/call", dict(name="append_line", arguments={
+                        **qt, "line": appended}), "accept")
+                    expected += b"\n" + appended.encode()
+                    assert saved.get("structuredContent", {}).get("revision") == hashlib.sha256(expected).hexdigest(), saved
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
             assert vm.wait(timeout=45) == 0
