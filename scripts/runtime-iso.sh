@@ -17,8 +17,8 @@ cp build/runtime-aios "$stage/context/build/"
 docker build -t aios-runtime -f scripts/runtime.Dockerfile "$stage/context"
 container=$(docker create aios-runtime)
 docker export "$container" | sudo tar -xpf - -C "$stage/root"
-sudo cp "$stage"/root/boot/vmlinuz-* "$stage/media/live/vmlinuz"
-sudo cp "$stage"/root/boot/initrd.img-* "$stage/media/live/initrd.img"
+sudo install -m 0644 "$stage"/root/boot/vmlinuz-* "$stage/media/live/vmlinuz"
+sudo install -m 0644 "$stage"/root/boot/initrd.img-* "$stage/media/live/initrd.img"
 sudo mksquashfs "$stage/root" "$stage/media/live/filesystem.squashfs" -comp lz4 -noappend -no-progress -e boot
 cat > "$stage/media/boot/grub/grub.cfg" <<'GRUB'
 set timeout=0

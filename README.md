@@ -30,7 +30,7 @@ bash scripts/boot-test.sh /path/to/vmlinuz
 
 ### 펌웨어에서 ISO 부팅
 
-**Boot and save contract**의 성공한 실행에서 `aios-x86_64-boot` 아티팩트를 다운로드할 수 있습니다. 압축 파일에는 ISO, SHA-256 체크섬, BIOS와 UEFI 부팅 로그가 들어 있습니다. 이 이미지는 GRUB에서 Linux를 시작하고 Rust PID 1의 문서 저장 및 Landlock 쓰기 권한 검사를 마친 후 VM을 종료합니다. GTK와 MCP는 현재 Linux 호스트 통합 테스트에서 실행합니다.
+**Boot and save contract**의 성공한 실행에서 `aios-x86_64-boot` 아티팩트를 다운로드할 수 있습니다. 압축 파일에는 ISO, SHA-256 체크섬, BIOS와 UEFI 부팅 로그가 들어 있습니다. 이 이미지는 GRUB에서 Linux를 시작하고 Rust PID 1의 문서 저장 및 Landlock 쓰기 권한 검사를 마친 후 VM을 종료합니다.
 
 ISO를 다시 만들려면 위의 직접 부팅 테스트로 생성한 initramfs에 같은 커널을 사용합니다. 빌드 환경에는 GRUB의 i386-pc와 x86_64-efi 모듈, xorriso, mtools, OVMF가 필요합니다. CI는 디스크 없는 x86-64 VM 두 대에서 동일한 ISO로 부팅합니다.
 
@@ -38,6 +38,12 @@ ISO를 다시 만들려면 위의 직접 부팅 테스트로 생성한 initramfs
 bash scripts/boot-iso.sh /path/to/vmlinuz build/initramfs.gz
 (cd build/firmware && sha256sum -c SHA256SUMS)
 ```
+
+## 부팅한 AIOS에서 문서 편집
+
+문서 실험에는 별도의 `aios-runtime.iso`를 사용합니다. 읽기 전용 ISO에는 Linux 커널, Rust PID 1, MCP 서버와 GTK 테스트 편집기가 들어갑니다. 문서는 별도의 가상 디스크에 저장합니다. 이 디스크에는 `AIOS-DATA` 레이블의 Btrfs 파일시스템과 `documents` 서브볼륨, 편집을 허용할 UTF-8 파일 `note.txt`가 있어야 합니다.
+
+**Bootable document runtime** 워크플로는 빈 임시 디스크에 이 구조를 준비하고 QEMU를 BIOS로 부팅합니다. 첫 번째 직렬 포트는 부팅 로그와 종료 명령에, 두 번째 포트는 MCP 요청과 응답에 사용합니다. 테스트는 문서 버전을 조회하고 GTK로 한글 한 줄을 저장한 다음 이전 버전의 요청을 다시 보냅니다. VM이 종료되면 가상 디스크를 읽기 전용으로 열어 최종 바이트를 대조합니다. 성공한 실행에서는 ISO, SHA-256 체크섬, 부팅 로그를 아티팩트로 받을 수 있습니다.
 
 ## GTK 저장 대화상자 관측
 
