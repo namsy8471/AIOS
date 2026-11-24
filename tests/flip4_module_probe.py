@@ -48,6 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recovery", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--overlay", action="store_true", help="build the driver archive for a reference document boot")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
@@ -68,15 +69,21 @@ def main():
         if any(not (root / path).is_file() or (root / path).is_symlink() for path in paths):
             raise ValueError("The recovery ramdisk did not provide each declared module as a file")
         (root / "module-order").write_text("\n".join(order) + "\n")
-        subprocess.run(["cc", "-static", "-O2", "-Wall", "-Wextra", "tests/flip4_module_init.c", "-o", root / "init"], check=True)
-        (root / "dev").mkdir()
-        subprocess.run(["sudo", "mknod", "-m", "600", root / "dev/console", "c", "5", "1"], check=True)
-        files = [".", *[str(path.relative_to(root)) for path in sorted(root.rglob("*"))]]
-        initramfs = stage / "probe.cpio.gz"
+        executable = root / ("usr/bin/flip4-driver-loader" if args.overlay else "init")
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["cc", "-static", "-O2", "-Wall", "-Wextra", "tests/flip4_module_init.c", "-o", executable], check=True)
+        if not args.overlay:
+            (root / "dev").mkdir()
+            subprocess.run(["sudo", "mknod", "-m", "600", root / "dev/console", "c", "5", "1"], check=True)
+        files = [str(path.relative_to(root)) for path in sorted(root.rglob("*"))]
+        initramfs = args.output / "drivers.cpio.gz" if args.overlay else stage / "probe.cpio.gz"
         initramfs.write_bytes(gzip.compress(subprocess.check_output(
             ["cpio", "-o", "-H", "newc", "--owner=0:0", "--null", "--quiet"],
             input=("\0".join(files) + "\0").encode(), cwd=root,
         ), compresslevel=2))
+        if args.overlay:
+            (args.output / "order.txt").write_text("\n".join(order) + "\n")
+            return
         log = args.output / "console.log"
         with log.open("wb") as output:
             subprocess.run([

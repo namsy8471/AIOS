@@ -76,6 +76,9 @@ fn kernel_capabilities() -> serde_json::Value {
 fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
+        if Path::new("/usr/bin/flip4-driver-loader").is_file() {
+            load_flip4_reference_drivers()?;
+        }
         let model = match guest_model_path() {
             Ok(path) => Some(path),
             Err(error) => {
@@ -401,9 +404,33 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
 }
 
 #[cfg(target_os = "linux")]
+fn load_flip4_reference_drivers() -> io::Result<()> {
+    mount_virtual_fs(c"proc", c"/proc")?;
+    let cmdline = fs::read_to_string("/proc/cmdline")?;
+    if Path::new("/etc/aios-qemu-ramdisk").is_file()
+        && cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "aios.qemu_document_disk=1")
+        && cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "aios.qemu_recovery_drivers=1")
+        && std::process::Command::new("/usr/bin/flip4-driver-loader")
+            .status()?
+            .success()
+    {
+        return Ok(());
+    }
+    Err(io::Error::other(
+        "reference recovery drivers require a successful QEMU probe boot",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 fn guest_model_path() -> io::Result<&'static Path> {
     if Path::new("/etc/aios-qemu-ramdisk").is_file() {
-        mount_virtual_fs(c"proc", c"/proc")?;
+        if !Path::new("/proc/cmdline").is_file() {
+            mount_virtual_fs(c"proc", c"/proc")?;
+        }
         let cmdline = fs::read_to_string("/proc/cmdline")?;
         if cmdline
             .split_ascii_whitespace()

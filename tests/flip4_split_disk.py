@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -12,10 +13,14 @@ parser.add_argument("bundle", type=Path)
 parser.add_argument("disk", type=Path)
 parser.add_argument("boot_payload", type=Path, nargs="?")
 parser.add_argument("--guest-model", action="store_true")
+parser.add_argument("--driver-order", type=Path)
 options = parser.parse_args()
 bundle, disk, boot_payload = options.bundle, options.disk, options.boot_payload
-if options.guest_model and boot_payload is None:
-    parser.error("--guest-model requires the extracted reference boot payload")
+if (options.guest_model or options.driver_order) and boot_payload is None:
+    parser.error("the selected profile requires the extracted reference boot payload")
+drivers = options.driver_order.read_text().splitlines() if options.driver_order else []
+if options.driver_order and not drivers:
+    parser.error("the recovery driver list is empty")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
 from flip4_model import launch
@@ -32,7 +37,8 @@ def system_hash():
     return digest.hexdigest()
 
 
-args = launch(disk, guest_model=options.guest_model, split_disk=True, boot_payload=boot_payload)
+args = launch(disk, guest_model=options.guest_model, split_disk=True, boot_payload=boot_payload,
+              recovery_drivers=bool(drivers))
 before = system_hash()
 original = "장보기"
 addition = "우유" if options.guest_model else "독립 저장"
@@ -45,6 +51,10 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
     ) as vm:
         try:
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+            if drivers:
+                boot_log = log_path.read_bytes().replace(b"\r", b"")
+                loaded = re.findall(rb"^AIOS_MODULE_RESULT (\S+) 0$", boot_log, re.MULTILINE)
+                assert [name.decode() for name in loaded] == drivers, f"Incomplete driver load in {log_path}"
             if options.guest_model:
                 assert b"AIOS_MODEL_PARTITION_READ_ONLY" in log_path.read_bytes(), "model partition was not mounted"
             assert read_document(vm, revision, log=log)["text"] == text
@@ -71,6 +81,8 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
 proof = {"system_sha256": before, "after_reboot": saved, "revision": revisions[1]}
 if options.guest_model:
     proof["model_usage"] = usage
+if drivers:
+    proof["drivers_loaded_each_boot"] = drivers
 if boot_payload:
     proof["boot_payload"] = {name: hashlib.sha256((boot_payload / name).read_bytes()).hexdigest()
                              for name in ("kernel", "ramdisk")}

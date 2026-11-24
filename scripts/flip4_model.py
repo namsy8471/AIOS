@@ -5,10 +5,10 @@ from arm64_model import main
 
 GUEST_RAM_MIB = 256
 
-def launch(disk, guest_model=False, split_disk=False, *, boot_payload=None):
+def launch(disk, guest_model=False, split_disk=False, *, boot_payload=None, recovery_drivers=False):
     kernel = boot_payload / "kernel" if boot_payload else Path(__file__).resolve().with_name("kernel")
     drive_path = str(disk.resolve()).replace(",", ",,")
-    ram_mib = 1536 if guest_model else GUEST_RAM_MIB
+    ram_mib = 1536 if guest_model else 1024 if recovery_drivers else GUEST_RAM_MIB
     cpus = 4 if guest_model else 1
     root, mode = ("sda1", "ro") if split_disk else ("sda", "rw")
     cmdline = "earlycon=pl011,0x9000000 console=ttyAMA0 panic=1"
@@ -17,6 +17,8 @@ def launch(disk, guest_model=False, split_disk=False, *, boot_payload=None):
         mounts = "aios.qemu_document_disk=1"
         if guest_model:
             mounts += " aios.qemu_model_partition=1"
+        if recovery_drivers:
+            mounts += " aios.qemu_recovery_drivers=1"
         boot = ["-initrd", str(boot_payload / "ramdisk"), "-append",
                 f"{cmdline} rdinit=/init {mounts}"]
     return [

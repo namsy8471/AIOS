@@ -54,4 +54,20 @@ if ! timeout 90s python3 tests/flip4_split_disk.py "$bundle" "$stage/document-wo
 fi
 cp "$stage/console-1.log" "$out/document-first-boot.log"
 cp "$stage/console-2.log" "$out/document-second-boot.log"
+
+python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay
+# The kernel unpacks both members into the same initramfs tree.
+cat "$split/document-init.cpio.gz" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
+assemble "$stage/document-with-drivers.cpio.gz" "$stage/document-with-drivers.img" \
+  "$out/document-driver-layout.json" "$stage/document-with-drivers"
+mkdir "$stage/driver-test"
+cp "$bundle/split-starter.raw" "$stage/driver-test/work.raw"
+if ! timeout 120s python3 tests/flip4_split_disk.py "$bundle" "$stage/driver-test/work.raw" \
+  "$stage/document-with-drivers" --driver-order "$stage/module-overlay/order.txt" \
+  > "$out/document-driver-proof.json"; then
+  tail -n 60 "$stage/driver-test"/console-*.log >&2
+  exit 1
+fi
+cp "$stage/driver-test/console-1.log" "$out/document-driver-first-boot.log"
+cp "$stage/driver-test/console-2.log" "$out/document-driver-second-boot.log"
 (cd "$out" && sha256sum *.img *.json *.log > SHA256SUMS)

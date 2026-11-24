@@ -14,6 +14,7 @@ int main(void) {
         perror("open module list");
         return 1;
     }
+    int failed = 0;
     char name[256];
     while (fgets(name, sizeof(name), list)) {
         name[strcspn(name, "\n")] = 0;
@@ -27,9 +28,12 @@ int main(void) {
         }
         int error = syscall(SYS_finit_module, fd, "", 0) == 0 ? 0 : errno;
         close(fd);
+        failed |= error != 0;
         printf("AIOS_MODULE_RESULT %s %d\n", name, error);
     }
     fclose(list);
     puts("AIOS_MODULE_PROBE_DONE");
+    if (getpid() != 1)
+        return failed;
     return reboot(RB_POWER_OFF);
 }
