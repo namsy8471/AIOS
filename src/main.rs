@@ -88,6 +88,9 @@ fn main() -> io::Result<std::process::ExitCode> {
         // Each write to /dev/kmsg creates a separate kernel log record.
         let record = format!("<4>AIOS_EARLY_INIT {report}\n");
         log.write_all(record.as_bytes())?;
+        if Path::new("/aios-pstore-probe").is_file() {
+            return probe_pstore(&record);
+        }
         unsafe {
             libc::reboot(libc::RB_POWER_OFF);
         }
@@ -155,6 +158,70 @@ fn main() -> io::Result<std::process::ExitCode> {
         return Err(io::Error::last_os_error());
     }
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(target_os = "linux")]
+fn probe_pstore(record: &str) -> io::Result<std::process::ExitCode> {
+    use std::io::Write;
+    for (kind, path) in [(c"sysfs", c"/sys"), (c"pstore", c"/pstore")] {
+        let flags = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+        if unsafe {
+            libc::mount(
+                kind.as_ptr(),
+                path.as_ptr(),
+                kind.as_ptr(),
+                flags,
+                std::ptr::null(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    let message = record.strip_prefix("<4>").unwrap_or(record).as_bytes();
+    match fs::read("/pstore/pmsg-ramoops-0") {
+        Ok(previous)
+            if previous
+                .windows(message.len())
+                .any(|window| window == message) =>
+        {
+            println!("AIOS_PSTORE_RECOVERED");
+            unsafe { libc::reboot(libc::RB_POWER_OFF) };
+        }
+        Ok(_) => {
+            return Err(io::Error::other(
+                "pstore did not contain the AIOS boot record",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let device = fs::read_to_string("/sys/class/pmsg/pmsg0/dev")?;
+            let (major, minor) = device
+                .trim()
+                .split_once(':')
+                .and_then(|(major, minor)| {
+                    Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
+                })
+                .ok_or_else(|| io::Error::other("invalid pmsg device number"))?;
+            if unsafe {
+                libc::mknod(
+                    c"/dev/pmsg0".as_ptr(),
+                    libc::S_IFCHR | 0o600,
+                    libc::makedev(major, minor),
+                )
+            } != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/pmsg0")?
+                .write_all(message)?;
+            println!("AIOS_PSTORE_WRITTEN");
+            unsafe { libc::reboot(libc::RB_AUTOBOOT) };
+        }
+        Err(error) => return Err(error),
+    }
+    Err(io::Error::last_os_error())
 }
 
 #[cfg(target_os = "linux")]

@@ -11,6 +11,10 @@ strip "$root/init"
 touch "$root/aios-boot-probe"
 mknod -m 600 "$root/dev/kmsg" c 1 11
 mknod -m 600 "$root/dev/console" c 5 1
+if [[ ${3:-} == pstore ]]; then
+  mkdir "$root/sys" "$root/pstore"
+  touch "$root/aios-pstore-probe"
+fi
 if [[ ${3:-} == document || ${3:-} == disk ]]; then
   mkdir "$root/etc" "$root/work"
   touch "$root/etc/aios-document-console" "$root/etc/aios-stream-worker"
@@ -25,8 +29,33 @@ if [[ ${3:-} == disk ]]; then
 fi
 (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/early-init.cpio.gz"
 vm=(qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1024M -nic none \
-  -display none -monitor none -serial stdio -no-reboot -kernel "$kernel" -initrd "$out/early-init.cpio.gz" \
+  -display none -monitor none -serial stdio -kernel "$kernel" -initrd "$out/early-init.cpio.gz" \
   -append 'earlycon=pl011,0x9000000 console=ttyAMA0 rdinit=/init panic=1')
+if [[ ${3:-} == pstore ]]; then
+  dtb="$out/pstore.dtb"
+  "${vm[@]}" -machine "dumpdtb=$dtb"
+  node=/reserved-memory/ramoops@70000000
+  fdtput -p -c "$dtb" "$node"
+  fdtput -t x "$dtb" /reserved-memory '#address-cells' 2
+  fdtput -t x "$dtb" /reserved-memory '#size-cells' 2
+  fdtput -t x "$dtb" /reserved-memory ranges
+  fdtput -t s "$dtb" "$node" compatible ramoops
+  fdtput -t x "$dtb" "$node" reg 0 70000000 0 200000
+  fdtput -t x "$dtb" "$node" pmsg-size 200000
+  timeout 45s "${vm[@]}" -dtb "$dtb" > "$out/console.log" 2>&1
+  python3 - "$out/console.log" <<'PY'
+import sys
+from pathlib import Path
+
+log = Path(sys.argv[1]).read_text(errors="replace")
+assert log.count("AIOS_EARLY_INIT {") == 2, log[-4000:]
+assert log.count("AIOS_PSTORE_WRITTEN") == log.count("AIOS_PSTORE_RECOVERED") == 1, log[-4000:]
+assert log.index("AIOS_PSTORE_WRITTEN") < log.index("AIOS_PSTORE_RECOVERED")
+print("AIOS recovered its pmsg boot record after guest reboot")
+PY
+  exit
+fi
+vm+=(-no-reboot)
 if [[ ${3:-} == document ]]; then
   timeout 60s python3 tests/flip4_document.py "$out/console.log" "${vm[@]}"
   exit

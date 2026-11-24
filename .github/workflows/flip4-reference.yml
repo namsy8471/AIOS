@@ -16,9 +16,10 @@ jobs:
       - name: Attempt a diskless boot on QEMU virt
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64 e2fsprogs
+            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64 e2fsprogs dtc
             cargo build --locked --release --target aarch64-unknown-linux-musl
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/pstore pstore
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/document document
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/bundle disk
             cp build/flip4/kernel scripts/flip4_model.py scripts/arm64_model.py scripts/model_mvp.py build/flip4/bundle/
