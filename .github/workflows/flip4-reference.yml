@@ -101,7 +101,11 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4
-      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build parted
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-reference-unsigned
+          path: build/flip4/reference-image
+      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs mkbootimg ninja-build parted
       - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/split-model-starter.raw
       - name: Infer and save in the disconnected ARM64 guest
         run: |
@@ -116,6 +120,25 @@ jobs:
           system_sha() { dd if="$1" bs=1M skip=1 count=768 status=none | sha256sum; }
           system_sha split-model-starter.raw > system.sha256
           system_sha inference-work.raw | cmp - system.sha256
+      - name: Infer from the extracted Android v2 image and reopen the saved document
+        run: |
+          bundle=build/flip4
+          proof="$bundle/reference-model"
+          mkdir -p "$proof"
+          unpack_bootimg --boot_img "$bundle/reference-image/aios-flip4-document-reference-unsigned.img" --out "$proof/payload"
+          cp --sparse=always "$bundle/split-model-starter.raw" "$proof/work.raw"
+          timeout 300s python3 tests/flip4_split_disk.py "$bundle" "$proof/work.raw" "$proof/payload" --guest-model > "$proof/proof.json"
+          jq -e --slurpfile layout "$bundle/reference-image/document-layout.json" '
+            .boot_payload.kernel == $layout[0].sections.kernel.sha256 and
+            .boot_payload.ramdisk == $layout[0].sections.ramdisk.sha256
+          ' "$proof/proof.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flip4-reference-model-proof
+          path: |
+            build/flip4/reference-model/proof.json
+            build/flip4/reference-model/console-*.log
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference

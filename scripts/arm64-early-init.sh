@@ -32,8 +32,9 @@ if [[ ${3:-} == split-disk ]]; then
   mkfs.ext4 -q -F -d "$root/work-data" "$out/work.ext4"
   rm -r -- "$root/work-data"
   touch "$root/etc/aios-qemu-ramdisk"
+  mknod -m 600 "$root/dev/sda1" b 8 1
   (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/document-init.cpio.gz"
-  rm "$root/etc/aios-qemu-ramdisk"
+  rm "$root/etc/aios-qemu-ramdisk" "$root/dev/sda1"
   truncate -s 16M "$out/system.ext4"
   mkfs.ext4 -q -F -d "$root" "$out/system.ext4"
   disk="$out/split.raw"

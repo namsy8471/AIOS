@@ -1,4 +1,5 @@
 """Boot a read-only system partition and persist edits on its data partition."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -6,23 +7,36 @@ import subprocess
 import sys
 
 
-bundle, disk = map(Path, sys.argv[1:3])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("bundle", type=Path)
+parser.add_argument("disk", type=Path)
+parser.add_argument("boot_payload", type=Path, nargs="?")
+parser.add_argument("--guest-model", action="store_true")
+options = parser.parse_args()
+bundle, disk, boot_payload = options.bundle, options.disk, options.boot_payload
+if options.guest_model and boot_payload is None:
+    parser.error("--guest-model requires the extracted reference boot payload")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
 from flip4_model import launch
 
 
 def system_hash():
+    digest = hashlib.sha256()
     with disk.open("rb") as raw:
-        raw.seek(1024 * 1024)
-        return hashlib.sha256(raw.read(16 * 1024 * 1024)).hexdigest()
+        raw.seek(1 << 20)
+        for _ in range(768 if options.guest_model else 16):
+            block = raw.read(1 << 20)
+            assert len(block) == 1 << 20, "system partition is incomplete"
+            digest.update(block)
+    return digest.hexdigest()
 
 
-boot_payload = Path(sys.argv[3]) if len(sys.argv) > 3 else None
-args = launch(disk, split_disk=True, boot_payload=boot_payload)
+args = launch(disk, guest_model=options.guest_model, split_disk=True, boot_payload=boot_payload)
 before = system_hash()
 original = "장보기"
-saved = original + "\n독립 저장"
+addition = "우유" if options.guest_model else "독립 저장"
+saved = original + "\n" + addition
 revisions = [hashlib.sha256(text.encode()).hexdigest() for text in (original, saved)]
 for index, (text, revision) in enumerate(zip((original, saved), revisions)):
     log_path = disk.with_name(f"console-{index + 1}.log")
@@ -30,10 +44,18 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
         args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     ) as vm:
         try:
+            if options.guest_model:
+                wait(vm, log, "AIOS_MODEL_PARTITION_READ_ONLY")
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
             assert read_document(vm, revision, log=log)["text"] == text
             if index == 0:
-                reply = command(vm, log, f"append {revision} 독립 저장", "AIOS_")
+                if options.guest_model:
+                    usage_line = command(vm, log, f"model-append {revision} 메모에 '{addition}'를 적어줘.", "MODEL_USAGE ")
+                    usage = json.loads(usage_line.removeprefix("MODEL_USAGE "))
+                    assert usage["inference_ms"] > 0 and usage["model_peak_rss_kib"] > 0, usage
+                    reply = wait(vm, log, "AIOS_")
+                else:
+                    reply = command(vm, log, f"append {revision} {addition}", "AIOS_")
                 assert reply == f"AIOS_SAVED revision={revisions[1]}", reply
                 stale = command(vm, log, f"append {revision} 거절될 변경", "AIOS_")
                 assert stale == "AIOS_REJECT invalid-edit", stale
@@ -45,6 +67,8 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
                 vm.kill()
     assert system_hash() == before
 proof = {"system_sha256": before, "after_reboot": saved, "revision": revisions[1]}
+if options.guest_model:
+    proof["model_usage"] = usage
 if boot_payload:
     proof["boot_payload"] = {name: hashlib.sha256((boot_payload / name).read_bytes()).hexdigest()
                              for name in ("kernel", "ramdisk")}

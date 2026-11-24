@@ -402,6 +402,29 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
 
 #[cfg(target_os = "linux")]
 fn guest_model_path() -> io::Result<&'static Path> {
+    if Path::new("/etc/aios-qemu-ramdisk").is_file() {
+        mount_virtual_fs(c"proc", c"/proc")?;
+        let cmdline = fs::read_to_string("/proc/cmdline")?;
+        if cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "aios.qemu_document_disk=1")
+            && cmdline
+                .split_ascii_whitespace()
+                .any(|arg| arg == "aios.qemu_model_partition=1")
+        {
+            fs::create_dir_all("/model")?;
+            mount_document_ext4(
+                c"/dev/sda1",
+                c"/model",
+                libc::MS_RDONLY | libc::MS_NODEV | libc::MS_NOSUID,
+                Some(c"noload"),
+                true,
+            )?;
+            println!("AIOS_MODEL_PARTITION_READ_ONLY");
+            return Ok(Path::new("/model/opt/model"));
+        }
+        return Ok(Path::new("/opt/model"));
+    }
     if !Path::new("/usr/bin/display-frame").is_file() {
         return Ok(Path::new("/opt/model"));
     }
@@ -530,6 +553,41 @@ impl Drop for DisplaySession {
 }
 
 #[cfg(target_os = "linux")]
+fn mount_document_ext4(
+    device: &std::ffi::CStr,
+    target: &std::ffi::CStr,
+    flags: libc::c_ulong,
+    options: Option<&std::ffi::CStr>,
+    wait_for_usb: bool,
+) -> io::Result<()> {
+    let data = options.map_or(std::ptr::null(), |options| options.as_ptr().cast());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if unsafe {
+            libc::mount(
+                device.as_ptr(),
+                target.as_ptr(),
+                c"ext4".as_ptr(),
+                flags,
+                data,
+            )
+        } == 0
+        {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        // With a ramdisk PID 1 can run before QEMU USB storage is registered.
+        if !wait_for_usb
+            || !matches!(error.raw_os_error(), Some(libc::ENXIO | libc::ENODEV))
+            || std::time::Instant::now() >= deadline
+        {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn document_console(
     work: &Path,
     guest_init: bool,
@@ -543,7 +601,9 @@ fn document_console(
         // This image's second partition is dedicated to documents.
         let ramdisk = Path::new("/etc/aios-qemu-ramdisk").is_file();
         if ramdisk {
-            mount_virtual_fs(c"proc", c"/proc")?;
+            if !Path::new("/proc/cmdline").is_file() {
+                mount_virtual_fs(c"proc", c"/proc")?;
+            }
             if !fs::read_to_string("/proc/cmdline")?
                 .split_ascii_whitespace()
                 .any(|argument| argument == "aios.qemu_document_disk=1")
@@ -554,30 +614,7 @@ fn document_console(
             }
         }
         let flags = libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        loop {
-            if unsafe {
-                libc::mount(
-                    c"/dev/sda2".as_ptr(),
-                    c"/work".as_ptr(),
-                    c"ext4".as_ptr(),
-                    flags,
-                    std::ptr::null(),
-                )
-            } == 0
-            {
-                break;
-            }
-            let error = io::Error::last_os_error();
-            // With a ramdisk PID 1 can run before QEMU USB storage is registered.
-            if !ramdisk
-                || !matches!(error.raw_os_error(), Some(libc::ENXIO | libc::ENODEV))
-                || std::time::Instant::now() >= deadline
-            {
-                return Err(error);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+        mount_document_ext4(c"/dev/sda2", c"/work", flags, None, ramdisk)?;
     }
     let stream = !guest_init || Path::new("/etc/aios-stream-worker").is_file();
     let executable = if guest_init {

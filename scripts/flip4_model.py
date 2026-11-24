@@ -14,8 +14,11 @@ def launch(disk, guest_model=False, split_disk=False, *, boot_payload=None):
     cmdline = "earlycon=pl011,0x9000000 console=ttyAMA0 panic=1"
     boot = ["-append", f"{cmdline} root=/dev/{root} rootfstype=ext4 rootwait {mode} init=/init"]
     if boot_payload:
+        mounts = "aios.qemu_document_disk=1"
+        if guest_model:
+            mounts += " aios.qemu_model_partition=1"
         boot = ["-initrd", str(boot_payload / "ramdisk"), "-append",
-                f"{cmdline} rdinit=/init aios.qemu_document_disk=1"]
+                f"{cmdline} rdinit=/init {mounts}"]
     return [
         "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max",
         "-smp", str(cpus), "-m", f"{ram_mib}M", "-nic", "none",
