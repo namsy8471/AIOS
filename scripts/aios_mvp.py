@@ -126,12 +126,14 @@ def main():
         shutil.copyfileobj(source, target)
 
     with boot(qemu, iso, disk, output / "first-boot.log") as (tool, catalog):
-        before, original = read(tool)
         addition = "AIOS에서 저장했습니다."
         if args.model_port is not None:
             from model_mvp import run_model
             addition = "검토 완료 " + str(1000 + secrets.randbelow(9000))
             instruction = f"현재 문서의 기존 내용을 유지하고 새 줄에 '{addition}'라고 한 번만 추가해 줘."
+        started = time.perf_counter_ns()
+        before, original = read(tool)
+        if args.model_port is not None:
             saved, trace = run_model(args.model_port, instruction, catalog(), tool, before)
         else:
             saved = tool("append_line", document=before["document"], revision=before["revision"], line=addition)
@@ -139,6 +141,10 @@ def main():
         digest = hashlib.sha256(expected.encode()).hexdigest()
         if saved["revision"] != digest:
             raise RuntimeError("Save did not return the expected revision")
+        state, text = read(tool)
+        if text != expected or state["revision"] != digest:
+            raise RuntimeError("Saved document failed readback")
+        verified_ns = time.perf_counter_ns() - started
     with boot(qemu, iso, disk, output / "second-boot.log") as (tool, _):
         reopened, actual = read(tool)
         if actual != expected or reopened["revision"] != digest:
@@ -146,7 +152,8 @@ def main():
     proof = dict(document=before["document"], before=original, after_reboot=actual,
                  revision_before=before["revision"], revision_after_reboot=digest, boots=2)
     if args.model_port is not None:
-        proof.update(instruction=instruction, model_trace=trace)
+        proof.update(instruction=instruction, model_trace=trace,
+                     instruction_to_verified_save_ns=verified_ns)
     (output / "proof.json").write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PASS: verified the saved document after a second ISO boot.", flush=True)
 

@@ -1,6 +1,7 @@
 """Let a local model choose operations on the open AIOS document."""
 import json
 import sys
+import time
 from urllib.request import Request, urlopen
 
 
@@ -29,12 +30,14 @@ def run_model(port, instruction, catalog, tool, state):
                            "name": "document_action", "schema": {"oneOf": choices}}})
         request = Request(f"http://127.0.0.1:{port}/v1/chat/completions",
                           data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        started = time.perf_counter_ns()
         with urlopen(request, timeout=120) as response:
             completion = json.load(response)
+        model_ns = time.perf_counter_ns() - started
         raw = completion["choices"][0]["message"]["content"]
         print("Local model:", raw, file=sys.stderr, flush=True)
         messages.append(dict(role="assistant", content=raw))
-        step = {"model": completion["model"], "reply": raw}
+        step = {"model": completion["model"], "reply": raw, "model_request_ns": model_ns}
         trace.append(step)
         try:
             choice = json.loads(raw)
@@ -43,7 +46,11 @@ def run_model(port, instruction, catalog, tool, state):
                 raise ValueError("Unknown operation or invalid arguments")
             args = dict(document=state["document"], revision=state["revision"], **choice)
             step["mcp_call"] = {"name": name, "arguments": args}
-            result = tool(name, **args)
+            started = time.perf_counter_ns()
+            try:
+                result = tool(name, **args)
+            finally:
+                step["tool_request_ns"] = time.perf_counter_ns() - started
             step["mcp_result"] = result
             if name != "read_text":
                 return result, trace
