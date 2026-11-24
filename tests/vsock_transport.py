@@ -1,6 +1,5 @@
 """Isolate a QEMU vhost-user backend and connect to the guest's MCP port."""
 from contextlib import contextmanager
-from pathlib import Path
 import socket
 import subprocess
 import time

@@ -50,6 +50,12 @@ bash scripts/boot-iso.sh /path/to/vmlinuz build/initramfs.gz
 
 **Bootable document runtime** 워크플로는 빈 임시 디스크에 이 구조를 준비하고 QEMU를 BIOS로 부팅합니다. 첫 번째 직렬 포트는 부팅 로그와 종료 명령에, 두 번째 포트는 MCP 요청과 응답에 사용합니다. 테스트는 문서 버전을 조회하고 GTK로 한글 한 줄을 저장한 다음 이전 버전의 요청을 다시 보냅니다. VM이 종료되면 가상 디스크를 읽기 전용으로 열어 최종 바이트를 대조합니다. 성공한 실행에서는 ISO, SHA-256 체크섬, 부팅 로그를 아티팩트로 받을 수 있습니다.
 
+### 호스트에서 부팅한 AIOS에 MCP 연결
+
+가상 머신에 virtio-vsock 장치를 붙이면 AIOS는 게스트 포트 `4050`에서 호스트(CID 2)의 연결을 받습니다. 가상 NIC는 꺼 둘 수 있습니다. 한 번에 하나의 MCP 세션이 문서 권한을 사용하며, 연결을 닫으면 다음 클라이언트가 새 세션으로 접속합니다. vsock 장치 없이 부팅하면 두 번째 직렬 포트를 사용합니다.
+
+Linux 호스트에서 `vhost-device-vsock`의 `--uds-path`를 VM 소유자만 접근할 수 있는 디렉터리에 둡니다. 이 소켓에 접근하는 클라이언트는 게스트에 설정된 문서 권한을 갖습니다. stdio MCP 클라이언트의 실행 명령은 `python3 scripts/vsock_stdio.py /path/to/host.sock`입니다. QEMU의 공유 메모리와 장치 설정 예시는 [부팅 시험 코드](tests/vsock_transport.py)에 있습니다.
+
 ## GTK 저장 대화상자 관측
 
 Linux 통합 테스트는 가상 화면에서 GTK 3 테스트 편집기를 실행합니다. 관측기는 AT-SPI2로 편집기의 프로세스와 창을 찾고, 저장 대화상자가 보이는 상태인지 확인합니다.

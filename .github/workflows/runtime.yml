@@ -24,7 +24,10 @@ jobs:
       - name: Build live runtime ISO
         run: bash scripts/runtime-iso.sh
       - name: Edit and reopen a virtual document disk
-        run: python3 tests/runtime_iso.py
+        run: |
+          python3 -m venv "$RUNNER_TEMP/runtime-client"
+          "$RUNNER_TEMP/runtime-client/bin/pip" install -q -r runtime/requirements.txt
+          "$RUNNER_TEMP/runtime-client/bin/python" tests/runtime_iso.py
       - uses: actions/upload-artifact@v4
         if: success()
         with:

@@ -1,4 +1,5 @@
 """Drive the ISO over two serial ports, then verify the powered-off volume."""
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -6,10 +7,23 @@ import sqlite3
 import shutil
 import subprocess
 import tempfile
+import sys
 import threading
 import time
 
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from vsock_transport import connect, device
+
+
+async def verify_reconnect(endpoint, revision):
+    client = StdioServerParameters(command=sys.executable,
+                                   args=["scripts/vsock_stdio.py", str(endpoint)])
+    async with stdio_client(client) as streams, ClientSession(*streams) as session:
+        await session.initialize()
+        state = await session.call_tool("inspect_document", {})
+        assert not state.isError and state.structuredContent["revision"] == revision
+
 
 run = subprocess.run
 original = "첫 문서\r\n둘째 줄".encode()
@@ -175,13 +189,9 @@ with tempfile.TemporaryDirectory() as temp:
                     assert any(e["tool"] == "edit_document" and e["outcome"] == "discarded" for e in entries)
                     Path("build/runtime/append-latency.json").write_text(json.dumps(timings))
                 # Reconnect to the same running VM with a fresh MCP handshake.
-                with connect(base, vsock) as (sock, stream):
-                    rpc(1, "initialize", dict(protocolVersion="2025-11-25", capabilities={},
-                                              clientInfo=dict(name="aios-reconnect", version="1")))
-                    send(dict(method="notifications/initialized"))
-                    state = rpc(2, "tools/call", dict(name="inspect_document", arguments={}))
-                    assert state["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
-                    print("Verified virtio-vsock reconnect and document revision")
+                asyncio.run(asyncio.wait_for(verify_reconnect(base / "host.sock",
+                                                              hashlib.sha256(expected).hexdigest()), 45))
+                print("Verified virtio-vsock reconnect through the stdio MCP client")
                 vm.stdin.write(b"poweroff\n")
                 vm.stdin.flush()
                 assert vm.wait(timeout=45) == 0
