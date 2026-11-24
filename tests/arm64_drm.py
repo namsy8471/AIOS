@@ -23,7 +23,8 @@ args = [
     "-qmp", f"unix:{monitor},server=on,wait=off",
     "-kernel", str(bundle / "vmlinuz-virt"), "-initrd", str(initramfs),
     "-drive", f"file={disk},if=virtio,format=raw",
-    "-device", "virtio-gpu-pci", "-device", "virtio-multitouch-pci" if multitouch else "virtio-tablet-pci",
+    "-device", "virtio-gpu-pci,xres=1080,yres=2640" if multitouch else "virtio-gpu-pci",
+    "-device", "virtio-multitouch-pci" if multitouch else "virtio-tablet-pci",
     "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw rw modules=virtio_gpu,virtio_input,evdev panic=1",
 ]
 
@@ -58,6 +59,22 @@ def capture_frame(stream, screenshot, colors, row_fraction=0.5):
             return
         time.sleep(0.2)
     raise RuntimeError("QEMU scanout did not contain the expected diagnostic colors")
+
+
+def preview_lines(path):
+    _, dimensions, _, pixels = path.read_bytes().split(b"\n", 3)
+    width, height = map(int, dimensions.split())
+    lines = 0
+    previous = False
+    for y in range(height // 3, height // 2):
+        row = 3 * y * width
+        left, right = width * 15 // 100, width * 85 // 100
+        drawn = any(pixels[i] >= 230 and pixels[i + 1] >= 230 and pixels[i + 2] >= 230
+                    for i in range(row + left * 3, row + right * 3, 3))
+        if drawn and not previous:
+            lines += 1
+        previous = drawn
+    return lines
 
 
 def contact(stream, slot, tracking, x=None, y=None):
@@ -116,13 +133,16 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 assert tapped.startswith("AIOS_POINTER_TAP "), tapped
                 x, y = map(int, tapped.split()[1:])
                 width, height = map(int, frame.split()[1].split("x"))
+                if multitouch:
+                    assert (width, height) == (1080, 2640), (width, height)
                 assert abs(x - width * 3 / 4) <= 2 and abs(y - height / 2) <= 2, (x, y)
                 capture_frame(stream, output / "after-tap.ppm", ("cc3322", "22aa55", "f2c94c"))
                 report["pointer_tap"] = {"x": x, "y": y}
                 assert command(vm, log, "", "AIOS_") == "AIOS_FRAME_DONE"
                 original = "작업 기록"
                 before = hashlib.sha256(original.encode()).hexdigest()
-                request = f"confirm-append {before} 우유"
+                addition = "내일 아침에 우유와 사과를 사서 냉장고에 넣어 두기" if multitouch else "우유"
+                request = f"confirm-append {before} {addition}"
                 assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 tap(stream, 8192, 24576)
                 assert wait(vm, log, "AIOS_") == "AIOS_REJECT confirmation-canceled"
@@ -135,15 +155,18 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                     assert wait(vm, log, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 else:
                     assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
-                capture_frame(stream, output / "confirmation.ppm", ("38425a", "12192d", "204caf"), 0.79)
+                preview = output / "confirmation.ppm"
+                capture_frame(stream, preview, ("38425a", "12192d", "204caf"), 0.79)
                 if multitouch:
+                    report["preview_visible_rows"] = preview_lines(preview)
+                    assert report["preview_visible_rows"] >= 2, report
                     contact(stream, 0, 1, 24576, 24576)
                     contact(stream, 1, 2, 8192, 24576)
                     contact(stream, 0, -1)
                     contact(stream, 1, -1)
                     capture_frame(stream, output / "after-two-fingers.ppm", ("38425a", "12192d", "204caf"), 0.79)
                 tap(stream, 24576, 24576)
-                expected = original + "\n우유"
+                expected = original + "\n" + addition
                 revision = hashlib.sha256(expected.encode()).hexdigest()
                 assert wait(vm, log, "AIOS_") == f"AIOS_SAVED revision={revision}"
                 assert read_document(vm, revision)["text"] == expected
