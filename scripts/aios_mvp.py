@@ -107,17 +107,32 @@ def read(tool):
         offset = page["next_offset"]
 
 
+def interactive_instructions():
+    while True:
+        try:
+            instruction = input("AIOS> ").strip()
+        except EOFError:
+            return
+        if not instruction:
+            return
+        yield instruction
+
+
 def main():
     bundle = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--output", type=Path, help="new directory for the disk, logs and proof")
     parser.add_argument("--model-port", type=int, help="local llama-server port for model-selected MCP calls")
-    parser.add_argument("--instruction", help="ask the local model to edit the open document")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--instruction", help="ask the local model to edit the open document")
+    mode.add_argument("--interactive", action="store_true", help="enter instructions until a blank line or EOF")
     parser.add_argument("--resume", type=Path, help="continue from a completed MVP output directory")
     args = parser.parse_args()
     if args.instruction is not None and (not args.instruction.strip() or args.model_port is None):
         parser.error("--instruction requires a nonempty request and --model-port")
+    if args.interactive and args.model_port is None:
+        parser.error("--interactive requires --model-port")
     qemu = shutil.which(args.qemu)
     if not qemu:
         parser.error("QEMU x86_64 is required; specify --qemu with its executable path")
@@ -141,6 +156,7 @@ def main():
 
     with boot(qemu, iso, disk, output / "first-boot.log") as (tool, catalog):
         addition = "AIOS에서 저장했습니다."
+        instruction = args.instruction
         if args.model_port is not None:
             from model_mvp import run_model
             addition = "검토 완료 " + str(1000 + secrets.randbelow(9000))
@@ -150,26 +166,42 @@ def main():
         if args.resume is not None and (before["revision"] != prior["revision_after_reboot"]
                                         or original != prior["after_reboot"]):
             raise RuntimeError("Workspace differs from the completed session")
-        if args.model_port is not None:
-            saved, trace = run_model(args.model_port, instruction, catalog(), tool, before)
-        else:
-            saved = tool("append_line", document=before["document"], revision=before["revision"], line=addition)
-        state, text = read(tool)
-        if args.instruction is None:
-            expected = original + ("" if not original or original.endswith("\n") else "\n") + addition
-            if text != expected:
-                raise RuntimeError("Saved document differs from the requested demo edit")
-        digest = hashlib.sha256(text.encode()).hexdigest()
-        if saved["revision"] != digest or state["revision"] != digest:
-            raise RuntimeError("Saved document failed readback")
-        verified_ns = time.perf_counter_ns() - started
+        state, text, digest = before, original, before["revision"]
+        instructions = interactive_instructions() if args.interactive else [instruction]
+        turns = []
+        available = catalog() if args.model_port is not None else []
+        if args.interactive:
+            print(text, flush=True)
+        for request in instructions:
+            if args.interactive:
+                started = time.perf_counter_ns()
+            if args.model_port is not None:
+                saved, trace = run_model(args.model_port, request, available, tool, state)
+            else:
+                saved = tool("append_line", document=state["document"], revision=digest, line=addition)
+            revision_before = digest
+            state, text = read(tool)
+            if args.instruction is None and not args.interactive:
+                expected = original + ("" if not original or original.endswith("\n") else "\n") + addition
+                if text != expected:
+                    raise RuntimeError("Saved document differs from the requested demo edit")
+            digest = hashlib.sha256(text.encode()).hexdigest()
+            if saved["revision"] != digest or state["revision"] != digest:
+                raise RuntimeError("Saved document failed readback")
+            verified_ns = time.perf_counter_ns() - started
+            if args.interactive:
+                turns.append(dict(instruction=request, revision_before=revision_before, revision_after=digest,
+                                  model_trace=trace, instruction_to_verified_save_ns=verified_ns))
+                print(text, flush=True)
     with boot(qemu, iso, disk, output / "second-boot.log") as (tool, _):
         reopened, actual = read(tool)
         if actual != text or reopened["revision"] != digest:
             raise RuntimeError("Rebooted guest returned different content")
     proof = dict(document=before["document"], before=original, after_reboot=actual,
                  revision_before=before["revision"], revision_after_reboot=digest, boots=2)
-    if args.model_port is not None:
+    if args.interactive:
+        proof["turns"] = turns
+    elif args.model_port is not None:
         proof.update(instruction=instruction, model_trace=trace,
                      instruction_to_verified_save_ns=verified_ns)
     (output / "proof.json").write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")

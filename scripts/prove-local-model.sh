@@ -61,3 +61,22 @@ assert [call["name"] for call in calls] == ["edit_document"], batch
 assert [edit["op"] for edit in calls[0]["arguments"]["edits"]] == ["replace_text", "append_line"], batch
 PY
 cp "$stage/batch/proof.json" build/runtime/model-batch-proof.json
+python3 build/runtime/aios_mvp.py --model-port 18080 --interactive --output "$stage/live" <<'REQUESTS'
+마지막에 '승인 요청' 한 줄을 추가해 줘.
+'승인 요청'을 '승인 완료'로 바꿔 줘.
+REQUESTS
+python3 - "$stage/live/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+proof = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+first, second = proof["turns"]
+middle = hashlib.sha256((proof["before"] + "\n승인 요청").encode()).hexdigest()
+assert first["revision_before"] == proof["revision_before"]
+assert first["revision_after"] == second["revision_before"] == middle
+assert second["revision_after"] == proof["revision_after_reboot"]
+assert proof["after_reboot"] == proof["before"] + "\n승인 완료"
+PY
+cp "$stage/live/proof.json" build/runtime/model-session-proof.json
