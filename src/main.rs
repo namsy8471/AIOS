@@ -48,6 +48,10 @@ fn run_demo() -> io::Result<()> {
 }
 
 fn main() -> io::Result<std::process::ExitCode> {
+    #[cfg(target_os = "linux")]
+    if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
+        return document_console();
+    }
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
@@ -96,6 +100,77 @@ fn main() -> io::Result<std::process::ExitCode> {
         return Err(io::Error::last_os_error());
     }
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(target_os = "linux")]
+fn document_console() -> io::Result<std::process::ExitCode> {
+    use sha2::{Digest, Sha256};
+    use std::io::BufRead;
+    let path = Path::new("/work/note.txt");
+    let staged = Path::new("/work/.aios-note-staging");
+    println!("AIOS_DOCUMENT_READY pid=1");
+    for request in io::stdin().lock().lines() {
+        let line = request?;
+        if line == "poweroff" {
+            unsafe {
+                libc::sync();
+                libc::reboot(libc::RB_POWER_OFF);
+            }
+            return Err(io::Error::last_os_error());
+        }
+        let original = fs::read_to_string(path)?;
+        let observed = format!("{:x}", Sha256::digest(original.as_bytes()));
+        if line == "inspect" {
+            println!("AIOS_DOCUMENT revision={observed} bytes={}", original.len());
+            continue;
+        }
+        let Some((revision, text)) = line.strip_prefix("append ").and_then(|r| r.split_once(' '))
+        else {
+            println!("AIOS_REJECT invalid-request");
+            continue;
+        };
+        if revision != observed
+            || text.is_empty()
+            || text.len() > 8192
+            || text.contains(['\0', '\r'])
+        {
+            println!("AIOS_REJECT invalid-edit");
+            continue;
+        }
+        let addition = if original.is_empty() || original.ends_with('\n') {
+            text.to_owned()
+        } else {
+            format!("\n{text}")
+        };
+        let mut hash = Sha256::new();
+        hash.update(original.as_bytes());
+        hash.update(addition.as_bytes());
+        let expected = format!("{:x}", hash.finalize());
+        // This console owns the workspace and reserves the staging filename.
+        fs::write(staged, &original)?;
+        let status = std::process::Command::new("/init")
+            .args([
+                "restrict-worker",
+                "--aios-edit",
+                ".aios-note-staging",
+                &observed,
+                &original.len().to_string(),
+                "0",
+                &addition,
+                &expected,
+            ])
+            .status()?;
+        if !status.success() {
+            fs::remove_file(staged)?;
+            println!("AIOS_REJECT worker-error");
+            continue;
+        }
+        fs::File::open(staged)?.sync_all()?;
+        fs::rename(staged, path)?;
+        fs::File::open("/work")?.sync_all()?;
+        println!("AIOS_SAVED revision={expected}");
+    }
+    Err(io::Error::other("Document console lost its input"))
 }
 
 #[cfg(target_os = "linux")]
