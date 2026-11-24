@@ -22,16 +22,26 @@ def measure(toolkit, base):
                "-Toolkit", toolkit, "-Document", document]
     else:
         cmd = [sys.executable, "tests/linux_editor_driver.py", toolkit, document]
-    adapter = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-    def send(line):
-        print(line, file=adapter.stdin, flush=True)
-        return adapter.stdout.readline().rstrip("\r\n")
+    def launch(argv):
+        return subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
 
+    def send(process, line):
+        print(line, file=process.stdin, flush=True)
+        return process.stdout.readline().rstrip("\r\n")
+
+    fixture = launch(cmd)
+    adapter = fixture
     samples = []
     try:
-        assert adapter.stdout.readline().strip() == "ready"
-        session = EditorSession(send)
+        assert fixture.stdout.readline().strip() == "ready"
+        if os.name == "nt":
+            pid = int(send(fixture, "pid"))
+            adapter = launch(["powershell", "-NoProfile", "-STA", "-File",
+                              runtime / "windows_session.ps1", "-ProcessId", str(pid),
+                              "-Title", "AIOS test editor", "-Toolkit", toolkit])
+            assert adapter.stdout.readline().strip() == "ready"
+        session = EditorSession(lambda line: send(adapter, line))
         for i in range(20):
             start = time.perf_counter_ns()
             view = session.observe()
@@ -59,7 +69,7 @@ def measure(toolkit, base):
             else:
                 raise AssertionError("Consumed observation accepted")
         current = session.observe()
-        assert send("inject-modal") == "injected"
+        assert send(fixture, "inject-modal") == "injected"
         assert session.observe()["elements"] == []
         try:
             session.act(current, button["element_id"], "invoke")
@@ -68,13 +78,22 @@ def measure(toolkit, base):
         else:
             raise AssertionError("Modal allowed background action")
     finally:
-        adapter.stdin.close()
         try:
-            assert adapter.wait(timeout=10) == 0
+            if adapter is not fixture:
+                adapter.stdin.close()
+                assert adapter.wait(timeout=10) == 0
+                assert json.loads(send(fixture, "observe"))["state"] == "dialog"
         finally:
-            if adapter.poll() is None:
+            if adapter is not fixture and adapter.poll() is None:
                 adapter.kill()
                 adapter.wait()
+            fixture.stdin.close()
+            try:
+                assert fixture.wait(timeout=10) == 0
+            finally:
+                if fixture.poll() is None:
+                    fixture.kill()
+                    fixture.wait()
     print("warm_edit_ms", json.dumps({"toolkit": toolkit, "count": len(samples),
                                      "median": statistics.median(samples),
                                      "p95": sorted(samples)[18], "samples": samples}))

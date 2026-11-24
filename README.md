@@ -89,6 +89,10 @@ Linux 호스트에서 MCP 클라이언트의 stdio 서버로 `runtime/mcp_server
 
 **Native editor save contract**는 격리된 Wayland 세션에서 GTK와 Qt 각각에 서로 다른 한글 문자열을 100회 입력합니다. 시작 시각은 편집기의 텍스트 변경 콜백 진입 시점이고, 종료 시각은 관측기가 접근성 API로 일치하는 본문을 읽은 시점입니다. 두 프로세스가 같은 Linux 단조 시계를 사용합니다. 실행별 원자료와 95번째로 빠른 표본(p95), 최댓값은 `linux-text-observation-latency` 아티팩트에 들어갑니다. 설계의 50ms 기준은 Windows 가상 머신에서 Linux 호스트까지의 경로에 적용하므로 별도 측정이 필요합니다.
 
+## 실행 중인 Windows 편집기에 연결
+
+`runtime/windows_session.ps1`은 운영자가 지정한 프로세스 ID와 창 제목으로 열린 편집기에 연결합니다. WPF에서는 접근성 이름이 `Document`인 본문을, WinForms에서는 기본 EDIT 컨트롤 하나를 찾습니다. 두 경우 모두 `Save` 버튼이 필요합니다. 이 인터페이스는 표준 입력과 출력으로 `observe`, `append 한 줄`, `save`를 주고받습니다. 매 요청에서 UI Automation 캐시로 창과 컨트롤을 함께 조회하고, 모달이 열리면 편집을 중단합니다. 연결을 닫으면 편집기는 계속 실행됩니다. CI는 WPF와 WinForms 테스트 편집기를 별도 프로세스에서 연 뒤 이 경로로 한글 문서를 각각 20회 저장합니다.
+
 ## Windows에서 문서 변경을 관측하는 시간
 
 Windows 테스트에서는 별도 프로세스의 WPF·WinForms 편집기가 한글 문자열을 각각 100번 바꿉니다. 관측기는 WPF에서는 UI Automation으로, WinForms 기본 편집 상자에서는 MSAA로 새 본문을 조회합니다. 값이 일치할 때까지 조회 사이에 1ms의 대기를 요청합니다. 실제 조회 간격에는 Windows 스케줄링 시간도 포함됩니다.

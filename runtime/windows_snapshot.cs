@@ -7,7 +7,7 @@ public sealed class EditorSnapshot {
     public int Handle;
     public ValuePattern Text;
     public InvokePattern Save;
-    public InvokePattern OpenModal;
+    public AutomationElement Window;
 
     private static void Visit(AutomationElement node, string title, bool native,
                               bool inside, EditorSnapshot result) {
@@ -25,16 +25,11 @@ public sealed class EditorSnapshot {
                 if (result.Text != null) throw new InvalidOperationException("Ambiguous document");
                 result.Text = (ValuePattern)node.GetCachedPattern(ValuePattern.Pattern);
             }
-            if (info.Name == "Save" || info.Name == "Open modal") {
+            if (info.Name == "Save") {
                 object pattern;
                 if (node.TryGetCachedPattern(InvokePattern.Pattern, out pattern)) {
-                    if (info.Name == "Save") {
-                        if (result.Save != null) throw new InvalidOperationException("Ambiguous save button");
-                        result.Save = (InvokePattern)pattern;
-                    } else {
-                        if (result.OpenModal != null) throw new InvalidOperationException("Ambiguous dialog button");
-                        result.OpenModal = (InvokePattern)pattern;
-                    }
+                    if (result.Save != null) throw new InvalidOperationException("Ambiguous save button");
+                    result.Save = (InvokePattern)pattern;
                 }
             }
         }
@@ -61,7 +56,7 @@ public sealed class EditorSnapshot {
         int mainCount = 0;
         foreach (AutomationElement root in roots) {
             bool main = root.Cached.Name == title;
-            if (main) mainCount++;
+            if (main) { mainCount++; result.Window = root; }
             Visit(root, title, native, main, result);
         }
         if (result.State != "dialog" && mainCount == 1 &&

@@ -97,15 +97,7 @@ if ($Editor) {
     exit
 }
 
-$runtime = Join-Path $PSScriptRoot '../runtime'
-. (Join-Path $runtime 'windows_text.ps1')
-if (!('EditorSnapshot' -as [type])) {
-    $references = @([Windows.Automation.AutomationElement].Assembly.Location,
-                    [Windows.Automation.AutomationPattern].Assembly.Location,
-                    [Windows.Rect].Assembly.Location)
-    Add-Type -Path (Join-Path $runtime 'windows_snapshot.cs') -ReferencedAssemblies $references
-}
-if ($Toolkit -eq 'winforms') { Initialize-NativeEditorText }
+. (Join-Path $PSScriptRoot '../runtime/windows_adapter.ps1')
 
 function Get-State {
     [EditorSnapshot]::Capture($child.Id, 'AIOS test editor', ($Toolkit -eq 'winforms'))
@@ -160,39 +152,17 @@ try {
     }
     [Console]::WriteLine('ready')
     while ($null -ne ($line = [Console]::ReadLine())) {
+        if ($line -eq 'pid') { [Console]::WriteLine($child.Id); continue }
         $observation = Get-State
-        if ($line -eq 'observe') {
-            $nodes = @()
-            if ($observation.State -eq 'ready') {
-                $control = $observation
-                $nodes = @(
-                    @{element_id='body'; name='Document'; role='textbox'; actions=@('append');
-                      value=(Read-DocumentValue $control).Replace("`r`n", "`n")}
-                    @{element_id='save'; name='Save'; role='button'; actions=@('invoke')}
-                )
-            }
-            [Console]::WriteLine((@{state=$observation.State; elements=$nodes} | ConvertTo-Json -Depth 5 -Compress))
-            continue
-        }
-        if ($observation.State -ne 'ready') { [Console]::WriteLine("blocked-$($observation.State)"); continue }
-        if ($line.StartsWith('append ')) {
-            $control = $observation
-            $expected = (Read-DocumentValue $control) + "`r`n" + $line.Substring(7)
-            if ($Toolkit -eq 'winforms') {
-                [NativeEditorText]::Write($control.Handle, $expected)
-            } else {
-                $control.Text.SetValue($expected)
-            }
-            [void](Wait-DocumentValue $control $expected)
-        } elseif ($line -eq 'save') {
-            $observation.Save.Invoke()
-        } elseif ($line -eq 'inject-modal') {
-            $observation.OpenModal.Invoke()
+        if ($line -eq 'inject-modal' -and $observation.State -eq 'ready') {
+            $button = $observation.Window.FindFirst([Windows.Automation.TreeScope]::Descendants,
+                [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Open modal'))
+            $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
             Wait-State dialog
             [Console]::WriteLine('injected')
-            continue
-        } else { throw "Unknown command" }
-        [Console]::WriteLine('ok')
+        } else {
+            [Console]::WriteLine((Invoke-EditorCommand $observation $Toolkit $line))
+        }
     }
 } finally {
     if (!$child.HasExited) { $child.Kill(); $child.WaitForExit() }
