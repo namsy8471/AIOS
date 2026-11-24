@@ -31,6 +31,7 @@ def failed_editor():
         time.sleep(0.5)
         Path(sys.argv[2]).write_text("escaped")
         os._exit(0)
+    Path(sys.argv[3]).write_text(str(time.monotonic_ns()))
     sys.exit(23)
 
 
@@ -45,10 +46,15 @@ def verify(binary, mount):
     worker = mount / "workspace_recovery.py"
     shutil.copyfile(__file__, worker)
     command = [binary, "workspace-run", root, "--", sys.executable]
-    failure = subprocess.run([*command, worker, "failed-editor", marker],
+    abort_stamp = mount / "abort-time"
+    failure = subprocess.run([*command, worker, "failed-editor", marker, abort_stamp],
                              capture_output=True, text=True)
+    returned_ns = time.monotonic_ns()
     print(failure.stderr, flush=True)
     assert failure.returncode == 23, failure
+    abort_to_return_ms = (returned_ns - int(abort_stamp.read_text())) / 1_000_000
+    print(f"abort_to_return_ms={abort_to_return_ms:.3f}")
+    assert 0 <= abort_to_return_ms < 1000
     for name, limit in [("checkpoint", 100_000), ("rollback", 1_000_000)]:
         match = re.search(rf"^{name}_us=(\d+)$", failure.stderr, re.MULTILINE)
         assert match and int(match[1]) < limit, failure.stderr

@@ -19,7 +19,7 @@ jobs:
           options=(-o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=-
                    -o Acquire::Retries=1 -o Acquire::https::Timeout=20)
           sudo apt-get "${options[@]}" update -qq
-          sudo apt-get "${options[@]}" install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt6 xvfb xauth dbus-x11
+          sudo apt-get "${options[@]}" install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt6 xvfb xauth dbus-x11 btrfs-progs
       - name: Observe dialogs and drive real editor saves
         timeout-minutes: 2
         run: |
@@ -28,6 +28,16 @@ jobs:
             export XDG_RUNTIME_DIR="$(mktemp -d)"
             dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked "$case" -- --ignored --nocapture
           done
+      - name: Cancel a saved edit and reopen it in a fresh GTK process
+        run: |
+          cargo build --locked
+          image=$(mktemp "$RUNNER_TEMP/aios-gtk-XXXXXX")
+          mountpoint=$(mktemp -d)
+          truncate -s 256M "$image"
+          mkfs.btrfs -q "$image"
+          sudo mount -o loop "$image" "$mountpoint"
+          trap 'sudo umount "$mountpoint"' EXIT
+          sudo /usr/bin/python3 tests/gtk_recovery.py target/debug/aios "$mountpoint"
   windows:
     runs-on: windows-2022
     timeout-minutes: 5
