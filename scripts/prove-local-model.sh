@@ -31,17 +31,18 @@ if ! python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/proof
 fi
 cp "$stage/proof/proof.json" build/runtime/model-proof.json
 cat build/runtime/model-proof.json
-python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/custom" \
+python3 build/runtime/aios_mvp.py --model-port 18080 --resume "$stage/proof" --output "$stage/custom" \
   --instruction "문서에서 '첫 문서'를 '작업 기록'으로 바꿔 줘."
 python3 - "$stage/proof/proof.json" "$stage/custom/proof.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-for path, operation in zip(sys.argv[1:], ("append_line", "replace_text"), strict=True):
-    proof = json.loads(Path(path).read_text(encoding="utf-8"))
+first, second = [json.loads(Path(path).read_text(encoding="utf-8")) for path in sys.argv[1:]]
+for proof, operation in ((first, "append_line"), (second, "replace_text")):
     trace = proof["model_trace"]
     assert len(trace) == 1 and trace[0]["mcp_call"]["name"] == operation, proof
-assert proof["after_reboot"] == "AIOS 작업 기록", proof
+assert second["before"] == first["after_reboot"]
+assert second["after_reboot"] == first["after_reboot"].replace("첫 문서", "작업 기록", 1), second
 PY
 cp "$stage/custom/proof.json" build/runtime/model-replace-proof.json

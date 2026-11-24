@@ -95,10 +95,16 @@ def boot(qemu, iso, disk, console):
 
 def read(tool):
     state = tool("inspect_document")
-    page = tool("read_text", document=state["document"], revision=state["revision"])
-    if page["next_offset"] is not None:
-        raise ValueError("Expected the short MVP document")
-    return state, page["text"]
+    chunks = []
+    offset = 0
+    while True:
+        page = tool("read_text", document=state["document"], revision=state["revision"], offset=offset)
+        chunks.append(page["text"])
+        if page["next_offset"] is None:
+            return state, "".join(chunks)
+        if page["next_offset"] != offset + len(page["text"]) or not page["text"]:
+            raise ValueError("Document page did not advance correctly")
+        offset = page["next_offset"]
 
 
 def main():
@@ -107,7 +113,8 @@ def main():
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--output", type=Path, help="new directory for the disk, logs and proof")
     parser.add_argument("--model-port", type=int, help="local llama-server port for model-selected MCP calls")
-    parser.add_argument("--instruction", help="ask the local model to edit the starter document")
+    parser.add_argument("--instruction", help="ask the local model to edit the open document")
+    parser.add_argument("--resume", type=Path, help="continue from a completed MVP output directory")
     args = parser.parse_args()
     if args.instruction is not None and (not args.instruction.strip() or args.model_port is None):
         parser.error("--instruction requires a nonempty request and --model-port")
@@ -125,8 +132,12 @@ def main():
         output = Path(tempfile.mkdtemp(prefix="aios-mvp-", dir=Path.cwd())).resolve()
     print(f"AIOS MVP output: {output}", flush=True)
     disk = output / "workspace.raw"
-    with lzma.open(seed) as source, disk.open("xb") as target:
-        shutil.copyfileobj(source, target)
+    if args.resume is None:
+        with lzma.open(seed) as source, disk.open("xb") as target:
+            shutil.copyfileobj(source, target)
+    else:
+        prior = json.loads((args.resume / "proof.json").read_text(encoding="utf-8"))
+        shutil.copyfile(args.resume / "workspace.raw", disk)
 
     with boot(qemu, iso, disk, output / "first-boot.log") as (tool, catalog):
         addition = "AIOS에서 저장했습니다."
@@ -136,6 +147,9 @@ def main():
             instruction = args.instruction or f"현재 문서의 기존 내용을 유지하고 새 줄에 '{addition}'라고 한 번만 추가해 줘."
         started = time.perf_counter_ns()
         before, original = read(tool)
+        if args.resume is not None and (before["revision"] != prior["revision_after_reboot"]
+                                        or original != prior["after_reboot"]):
+            raise RuntimeError("Workspace differs from the completed session")
         if args.model_port is not None:
             saved, trace = run_model(args.model_port, instruction, catalog(), tool, before)
         else:

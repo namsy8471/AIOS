@@ -20,6 +20,13 @@ GitHub Actions에서 **Bootable document runtime → Run workflow**를 실행하
 
 검증을 통과하면 위 아티팩트의 `model-proof.json`에서 지시문, 모델 응답, 실제 도구 호출과 재부팅 후 본문을 확인할 수 있습니다. 이미 호스트에서 llama-server를 실행 중이라면 압축을 푼 폴더에서 `python aios_mvp.py --model-port 18080`으로 같은 시험을 실행할 수 있습니다. 포트 번호는 서버 설정에 맞춰 지정합니다.
 
+앞선 편집을 이어가려면 `--resume`에 완료된 실행 폴더를 지정합니다. 아래 예시는 첫 번째 결과의 가상 디스크를 새 폴더로 복사하고, 부팅한 문서가 이전 결과와 일치하는지 확인한 뒤 두 번째 지시를 수행합니다.
+
+```sh
+python aios_mvp.py --model-port 18080 --instruction "마지막 줄에 '승인 요청'을 추가해 줘." --output work-1
+python aios_mvp.py --model-port 18080 --resume work-1 --instruction "'승인 요청'을 '승인 완료'로 바꿔 줘." --output work-2
+```
+
 ### 한 줄 저장 시간
 
 동일한 커밋에서 AIOS 가상 머신을 두 번 독립적으로 실행해, 매 실행에서 직접 편집과 GTK 접근성 편집으로 같은 한글 한 줄을 여섯 쌍씩 추가했습니다. 각 쌍의 실행 순서는 번갈아 바꿨습니다. 호스트에서 문서 도구를 호출하기 직전부터 저장 응답을 받을 때까지 측정했고, 각 응답의 SHA-256과 종료 후 디스크에서 복원한 본문을 검증했습니다.
