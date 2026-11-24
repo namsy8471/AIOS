@@ -179,11 +179,29 @@ fn probe_pstore(record: &str) -> io::Result<std::process::ExitCode> {
         }
     }
     let message = record.strip_prefix("<4>").unwrap_or(record).as_bytes();
+    let message = message.strip_suffix(b"\n").unwrap_or(message);
+    // Android liblog's packed pmsg header, log header, and text payload.
+    // The boot probe executes as root with PID and TID 1.
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?;
+    let mut frame = vec![b'l'];
+    let length = 18 + 1 + b"AIOS\0".len() + message.len() + 1;
+    frame.extend_from_slice(&(length as u16).to_le_bytes());
+    frame.extend_from_slice(&0u16.to_le_bytes()); // UID
+    frame.extend_from_slice(&1u16.to_le_bytes()); // PID
+    frame.push(0); // LOG_ID_MAIN
+    frame.extend_from_slice(&1u16.to_le_bytes()); // TID
+    frame.extend_from_slice(&(timestamp.as_secs() as u32).to_le_bytes());
+    frame.extend_from_slice(&timestamp.subsec_nanos().to_le_bytes());
+    frame.extend_from_slice(b"\x04AIOS\0"); // ANDROID_LOG_INFO and tag
+    frame.extend_from_slice(message);
+    frame.push(0);
     match fs::read("/pstore/pmsg-ramoops-0") {
         Ok(previous)
             if previous
-                .windows(message.len())
-                .any(|window| window == message) =>
+                .windows(frame.len())
+                .any(|window| window[..10] == frame[..10] && window[18..] == frame[18..]) =>
         {
             println!("AIOS_PSTORE_RECOVERED");
             unsafe { libc::reboot(libc::RB_POWER_OFF) };
@@ -215,7 +233,7 @@ fn probe_pstore(record: &str) -> io::Result<std::process::ExitCode> {
             fs::OpenOptions::new()
                 .write(true)
                 .open("/dev/pmsg0")?
-                .write_all(message)?;
+                .write_all(&frame)?;
             println!("AIOS_PSTORE_WRITTEN");
             unsafe { libc::reboot(libc::RB_AUTOBOOT) };
         }
