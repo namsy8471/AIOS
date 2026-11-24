@@ -60,6 +60,25 @@ for boot in (1, 2, 3):
         finally:
             if vm.poll() is None:
                 vm.kill()
+
+readonly = args.copy()
+readonly[-1] = readonly[-1].replace("rootwait rw", "rootwait ro")
+with (output / "disk-readonly.log").open("wb", buffering=0) as log, subprocess.Popen(
+    readonly, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+) as vm:
+    try:
+        wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+        assert read_document(vm, cut_revision)["text"] == after_cut
+        reply = command(vm, log, f"append {cut_revision} 저장 실패 검증", "AIOS_")
+        assert reply.startswith("AIOS_REJECT storage-write-error "), reply
+        assert read_document(vm, cut_revision)["text"] == after_cut
+        vm.stdin.write(b"poweroff\n")
+        vm.stdin.flush()
+        assert vm.wait(timeout=20) == 0
+    finally:
+        if vm.poll() is None:
+            vm.kill()
+
 for name, contents in [("note.txt", after_cut), ("sibling.txt", "private")]:
     assert subprocess.check_output(["debugfs", "-R", f"cat /work/{name}", disk]) == contents.encode()
 report = {"instruction": instruction, "model_trace": trace, "after_reboot": expected, "revision": revision}

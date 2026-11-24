@@ -395,7 +395,13 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                 .status()?;
             continue;
         }
-        let original = fs::read_to_string(path)?;
+        let original = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                println!("AIOS_REJECT storage-read-error {error}");
+                continue;
+            }
+        };
         let observed = format!("{:x}", Sha256::digest(original.as_bytes()));
         if line == "inspect" {
             println!("AIOS_DOCUMENT revision={observed} bytes={}", original.len());
@@ -465,50 +471,63 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         hash.update(original.as_bytes());
         hash.update(addition.as_bytes());
         let expected = format!("{:x}", hash.finalize());
-        // This console owns the workspace and reserves the staging filename.
-        let status = if stream {
+        if stream && original.len() + addition.len() > 4 * 1024 * 1024 {
+            println!("AIOS_REJECT invalid-edit");
+            continue;
+        }
+        let publish = (|| -> io::Result<Option<fs::File>> {
             use std::io::Write;
-            if original.len() + addition.len() > 4 * 1024 * 1024 {
-                println!("AIOS_REJECT invalid-edit");
-                continue;
-            }
-            // PID 1 owns this directory. Recover its unpublished stage after an interruption.
+            let directory = fs::File::open("/work")?;
+            // The console owns the staging name, including any interrupted save.
             match fs::remove_file(staged) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
                 _ => {}
             }
-            let mut output = fs::File::options()
-                .append(true)
-                .create_new(true)
-                .open(staged)?;
-            output.write_all(original.as_bytes())?;
-            stream_worker::run(output, &addition, false)?
-        } else {
-            fs::write(staged, &original)?;
-            std::process::Command::new("/init")
-                .args([
-                    "restrict-worker",
-                    "--aios-edit",
-                    ".aios-note-staging",
-                    &observed,
-                    &original.len().to_string(),
-                    "0",
-                    &addition,
-                    &expected,
-                ])
-                .status()?
-        };
-        if !status.success()
-            || (stream && format!("{:x}", Sha256::digest(fs::read(staged)?)) != expected)
-        {
-            fs::remove_file(staged)?;
-            println!("AIOS_REJECT worker-error");
-            continue;
+            let status = if stream {
+                let mut output = fs::File::options()
+                    .append(true)
+                    .create_new(true)
+                    .open(staged)?;
+                output.write_all(original.as_bytes())?;
+                stream_worker::run(output, &addition, false)?
+            } else {
+                fs::write(staged, &original)?;
+                std::process::Command::new("/init")
+                    .args([
+                        "restrict-worker",
+                        "--aios-edit",
+                        ".aios-note-staging",
+                        &observed,
+                        &original.len().to_string(),
+                        "0",
+                        &addition,
+                        &expected,
+                    ])
+                    .status()?
+            };
+            if !status.success()
+                || (stream && format!("{:x}", Sha256::digest(fs::read(staged)?)) != expected)
+            {
+                return Ok(None);
+            }
+            fs::File::open(staged)?.sync_all()?;
+            fs::rename(staged, path)?;
+            Ok(Some(directory))
+        })();
+        match publish {
+            Ok(Some(directory)) => match directory.sync_all() {
+                Ok(()) => println!("AIOS_SAVED revision={expected}"),
+                Err(error) => println!("AIOS_UNCONFIRMED revision={expected} {error}"),
+            },
+            Ok(None) => {
+                let _ = fs::remove_file(staged);
+                println!("AIOS_REJECT worker-error");
+            }
+            Err(error) => {
+                let _ = fs::remove_file(staged);
+                println!("AIOS_REJECT storage-write-error {error}");
+            }
         }
-        fs::File::open(staged)?.sync_all()?;
-        fs::rename(staged, path)?;
-        fs::File::open("/work")?.sync_all()?;
-        println!("AIOS_SAVED revision={expected}");
     }
     Err(io::Error::other("Document console lost its input"))
 }
