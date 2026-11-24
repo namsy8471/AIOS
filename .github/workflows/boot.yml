@@ -1,0 +1,21 @@
+name: Boot and save contract
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the host demo
+        run: cargo test --locked
+      - name: Install guest build and boot tools
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 linux-image-virtual cpio
+      - name: Boot the Rust init
+        run: |
+          kernel=$(find /boot -name 'vmlinuz-*-generic' | sort -V | tail -1)
+          sudo install -m 644 "$kernel" build-kernel
+          bash scripts/boot-test.sh build-kernel
