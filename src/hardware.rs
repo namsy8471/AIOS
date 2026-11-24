@@ -30,8 +30,11 @@ pub fn display_capabilities() -> io::Result<Value> {
     let mut cards = Vec::new();
     let mut connectors = Vec::new();
     for entry in entries("/sys/class/drm")? {
-        let name = entry.file_name();
-        let Some(card) = name.to_str().and_then(|name| name.strip_prefix("card")) else {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(card) = name.strip_prefix("card") else {
             continue;
         };
         let path = entry.path();
@@ -51,8 +54,10 @@ pub fn display_capabilities() -> io::Result<Value> {
             continue;
         }
         if let Some(name) = text(&device.join("name")).filter(|name| name.contains("touchscreen")) {
-            touchscreens.push(json!({"event":entry.file_name(),"name":name,
-                "driver":driver(&device.join("device/driver"))}));
+            touchscreens.push(
+                json!({"event":entry.file_name().to_string_lossy(),"name":name,
+                "driver":driver(&device.join("device/driver"))}),
+            );
         }
     }
     Ok(json!({"drm_cards":cards,"drm_connectors":connectors,"touchscreens":touchscreens}))
