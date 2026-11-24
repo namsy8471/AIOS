@@ -13,7 +13,7 @@ truncate -s 48M "$stage/work.raw"
 mkfs.ext4 -q -F -d "$stage/root" "$stage/work.raw"
 bundle=build/arm64-console
 mkdir -p "$bundle"
-cp /boot/{vmlinuz-virt,initramfs-virt} scripts/arm64-console.sh "$bundle/"
+install -m 0644 /boot/{vmlinuz-virt,initramfs-virt} scripts/arm64-console.sh "$bundle/"
 cp "$stage/work.raw" "$bundle/starter.raw"
 (cd "$bundle" && sha256sum vmlinuz-virt initramfs-virt starter.raw arm64-console.sh > SHA256SUMS)
 timeout 240s python3 tests/arm64_document_disk.py "$bundle/arm64-console.sh" "$stage/work.raw"
