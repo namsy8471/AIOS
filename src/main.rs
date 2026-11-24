@@ -409,24 +409,9 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             continue;
         }
         let generated;
-        let edit = if let Some(request) = line.strip_prefix("model-append ") {
-            let Some((revision, instruction)) = request.split_once(' ') else {
-                println!("AIOS_REJECT invalid-request");
-                continue;
-            };
-            if revision != observed {
-                println!("AIOS_REJECT invalid-edit");
-                continue;
-            }
-            match model_append_text(instruction) {
-                Ok(text) => generated = text,
-                Err(error) => {
-                    println!("AIOS_REJECT {error}");
-                    continue;
-                }
-            }
-            Some((revision, generated.as_str()))
-        } else if let Some(request) = line.strip_prefix("korean ") {
+        let korean = line.strip_prefix("korean ");
+        let allow_model = line.strip_prefix("model-append ");
+        let edit = if let Some(request) = korean.or(allow_model) {
             let Some((revision, instruction)) = request.split_once(' ') else {
                 println!("AIOS_REJECT invalid-request");
                 continue;
@@ -442,7 +427,20 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                 println!("AIOS_READ revision={observed}");
                 continue;
             }
-            korean_append(instruction).map(|text| (revision, text))
+            if let Some(text) = korean_append(instruction) {
+                Some((revision, text))
+            } else if allow_model.is_some() {
+                match model_append_text(instruction) {
+                    Ok(text) => generated = text,
+                    Err(error) => {
+                        println!("AIOS_REJECT {error}");
+                        continue;
+                    }
+                }
+                Some((revision, generated.as_str()))
+            } else {
+                None
+            }
         } else {
             line.strip_prefix("append ").and_then(|r| r.split_once(' '))
         };

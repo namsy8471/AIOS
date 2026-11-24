@@ -120,7 +120,7 @@ def main(launch=None):
     parser.add_argument("--model-port", type=int, default=18080)
     engine = parser.add_mutually_exclusive_group()
     engine.add_argument("--offline", action="store_true", help="use built-in Korean memo commands in the guest")
-    engine.add_argument("--guest-model", action="store_true", help="extract a line to append with a model installed in the guest")
+    engine.add_argument("--guest-model", action="store_true", help="use built-in Korean commands with local model inference for additional phrasings")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
     if not args.disk.is_file() or args.disk.samefile(launcher.with_name("starter.raw")):

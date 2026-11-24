@@ -101,16 +101,17 @@ jobs:
         run: |
           cd build/flip4
           cp --sparse=always model.raw inference-work.raw
-          timeout 600s python3 flip4_model.py inference-work.raw --guest-model --instruction "메모에 '우유'를 적어줘." > inferred.json 2> usage.json
+          printf '%s\n' "장보기 메모에 '사과 두 개' 추가해 줘." "메모에 '우유'를 적어줘." "메모 보여줘" '' |
+            timeout 600s python3 flip4_model.py inference-work.raw --guest-model --interactive > inferred.jsonl 2> usage.json
+          jq -se 'length == 3 and .[0].text == "장보기\n사과 두 개" and .[1].text == "장보기\n사과 두 개\n우유" and .[1] == .[2]' inferred.jsonl
           jq -se 'length == 1 and .[0].model_peak_rss_kib > 0 and .[0].inference_ms > 0' usage.json
           timeout 60s python3 flip4_model.py inference-work.raw --show > reopened.json
-          cmp inferred.json reopened.json
-          jq -e '.text == "장보기\n우유"' reopened.json
+          tail -1 inferred.jsonl | cmp - reopened.json
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference
           path: |
-            build/flip4/inferred.json
+            build/flip4/inferred.jsonl
             build/flip4/usage.json
       - run: cd build/flip4 && sha256sum model.raw > MODEL_SHA256SUMS
       - uses: actions/upload-artifact@v4
