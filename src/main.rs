@@ -76,7 +76,14 @@ fn kernel_capabilities() -> serde_json::Value {
 fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
-        return document_console(Path::new("/work"), true, Some(Path::new("/opt/model")));
+        let model = match guest_model_path() {
+            Ok(path) => Some(path),
+            Err(error) => {
+                eprintln!("AIOS_MODEL_DISK_UNAVAILABLE {error}");
+                None
+            }
+        };
+        return document_console(Path::new("/work"), true, model);
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/aios-boot-probe").is_file() {
@@ -394,6 +401,78 @@ fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::R
 }
 
 #[cfg(target_os = "linux")]
+fn guest_model_path() -> io::Result<&'static Path> {
+    if !Path::new("/usr/bin/display-frame").is_file() {
+        return Ok(Path::new("/opt/model"));
+    }
+    if !Path::new("/proc/cmdline").is_file() {
+        mount_virtual_fs(c"proc", c"/proc")?;
+    }
+    if !fs::read_to_string("/proc/cmdline")?
+        .split_whitespace()
+        .any(|arg| arg == "aios.model_disk=1")
+    {
+        return Ok(Path::new("/opt/model"));
+    }
+    if !Path::new("/sys/class").is_dir() {
+        mount_virtual_fs(c"sysfs", c"/sys")?;
+    }
+    if !Path::new("/dev/vdb").exists() {
+        let device = fs::read_to_string("/sys/class/block/vdb/dev")?;
+        let (major, minor) = device
+            .trim()
+            .split_once(':')
+            .and_then(|(major, minor)| {
+                Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
+            })
+            .ok_or_else(|| io::Error::other("invalid model disk device number"))?;
+        if unsafe {
+            libc::mknod(
+                c"/dev/vdb".as_ptr(),
+                libc::S_IFBLK | 0o600,
+                libc::makedev(major, minor),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    fs::create_dir_all("/model")?;
+    let flags = libc::MS_RDONLY | libc::MS_NODEV | libc::MS_NOSUID;
+    if unsafe {
+        libc::mount(
+            c"/dev/vdb".as_ptr(),
+            c"/model".as_ptr(),
+            c"ext4".as_ptr(),
+            flags,
+            c"noload".as_ptr().cast(),
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(Path::new("/model/opt/model"))
+}
+
+#[cfg(target_os = "linux")]
+fn mount_virtual_fs(kind: &std::ffi::CStr, path: &std::ffi::CStr) -> io::Result<()> {
+    let flags = libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+    if unsafe {
+        libc::mount(
+            kind.as_ptr(),
+            path.as_ptr(),
+            kind.as_ptr(),
+            flags,
+            std::ptr::null(),
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn document_console(
     work: &Path,
     guest_init: bool,
@@ -469,20 +548,7 @@ fn document_console(
             let result = (|| {
                 if guest_init && !Path::new("/sys/class").is_dir() {
                     fs::create_dir_all("/sys")?;
-                    let flags =
-                        libc::MS_RDONLY | libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
-                    if unsafe {
-                        libc::mount(
-                            c"sysfs".as_ptr(),
-                            c"/sys".as_ptr(),
-                            c"sysfs".as_ptr(),
-                            flags,
-                            std::ptr::null(),
-                        )
-                    } != 0
-                    {
-                        return Err(io::Error::last_os_error());
-                    }
+                    mount_virtual_fs(c"sysfs", c"/sys")?;
                 }
                 hardware::display_capabilities()
             })();
