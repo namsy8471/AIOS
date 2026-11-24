@@ -20,11 +20,14 @@ fn contents(file: &mut File) -> io::Result<Vec<u8>> {
 }
 
 pub fn edit(args: &[OsString]) -> io::Result<ExitCode> {
-    let [filename, observed, offset, removed, inserted, expected] = args else {
+    let [filename, observed, ranges @ .., expected] = args else {
         return Err(io::Error::other(
             "expected document, revision, byte range, inserted text and resulting revision",
         ));
     };
+    if ranges.is_empty() || ranges.len() > 32 * 3 || ranges.len() % 3 != 0 {
+        return Err(io::Error::other("expected between 1 and 32 edit ranges"));
+    }
     let name = Path::new(filename);
     if name.file_name() != Some(filename.as_os_str()) {
         return Err(io::Error::other("expected a single document name"));
@@ -49,25 +52,29 @@ pub fn edit(args: &[OsString]) -> io::Result<ExitCode> {
             .and_then(|s| s.parse::<usize>().ok())
             .ok_or_else(|| io::Error::other("invalid byte range"))
     };
-    let start = number(offset)?;
-    let end = start
-        .checked_add(number(removed)?)
-        .ok_or_else(|| io::Error::other("invalid byte range"))?;
-    let text = std::str::from_utf8(&original).map_err(io::Error::other)?;
-    let insert = inserted
-        .to_str()
-        .ok_or_else(|| io::Error::other("invalid UTF-8"))?;
-    if !text.is_char_boundary(start)
-        || !text.is_char_boundary(end)
-        || insert.len() > 8194
-        || original.len() - (end - start) + insert.len() > MAX_BYTES
-    {
-        return Err(io::Error::other("invalid edit range or size"));
+    let mut text = String::from_utf8(original).map_err(io::Error::other)?;
+    let mut first_change = text.len();
+    for range in ranges.chunks_exact(3) {
+        let start = number(&range[0])?;
+        let end = start
+            .checked_add(number(&range[1])?)
+            .ok_or_else(|| io::Error::other("invalid byte range"))?;
+        let insert = range[2]
+            .to_str()
+            .ok_or_else(|| io::Error::other("invalid UTF-8"))?;
+        if !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+            || insert.len() > 8194
+            || text.len() - (end - start) + insert.len() > MAX_BYTES
+        {
+            return Err(io::Error::other("invalid edit range or size"));
+        }
+        first_change = first_change.min(start);
+        text.replace_range(start..end, insert);
     }
-    file.seek(io::SeekFrom::Start(start as u64))?;
-    file.write_all(insert.as_bytes())?;
-    file.write_all(&original[end..])?;
-    file.set_len((original.len() - (end - start) + insert.len()) as u64)?;
+    file.seek(io::SeekFrom::Start(first_change as u64))?;
+    file.write_all(&text.as_bytes()[first_change..])?;
+    file.set_len(text.len() as u64)?;
     if expected.to_str() != Some(&format!("{:x}", Sha256::digest(contents(&mut file)?))) {
         return Err(io::Error::other("staged contents failed verification"));
     }

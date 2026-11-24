@@ -25,7 +25,7 @@ async def verify(binary, mount):
     async with stdio_client(params) as streams, ClientSession(*streams) as client:
         await client.initialize()
         listing = await client.list_tools()
-        assert {tool.name for tool in listing.tools} == {"inspect_document", "read_text", "append_line", "replace_text"}
+        assert {tool.name for tool in listing.tools} == {"inspect_document", "read_text", "append_line", "replace_text", "edit_document"}
         inspected = await client.call_tool("inspect_document", {})
         assert not inspected.isError
         rev = inspected.structuredContent["revision"]

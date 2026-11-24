@@ -127,6 +127,22 @@ with tempfile.TemporaryDirectory() as temp:
                     saved = rpc(40, "tools/call", dict(name="replace_text", arguments=replacement))
                     expected = expected.replace(replacement["old"].encode(), replacement["new"].encode())
                     assert saved["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
+                    batch = dict(document="note.txt", revision=hashlib.sha256(expected).hexdigest(),
+                                 edits=[dict(op="append_line", line="검토 전"),
+                                        dict(op="replace_text", old="검토 전", new="검토 완료"),
+                                        dict(op="replace_text", old="최종본", new="공유본")])
+                    bad = {**batch, "edits": [*batch["edits"], dict(op="replace_text", old="측정", new="x")]}
+                    failed = rpc(41, "tools/call", dict(name="edit_document", arguments=bad))
+                    assert failed["isError"] and "Edit 4" in str(failed)
+                    current = rpc(42, "tools/call", dict(name="inspect_document", arguments={}))
+                    assert current["structuredContent"]["revision"] == batch["revision"]
+                    reviewed = dict(name="edit_document", arguments={**batch, "review": True})
+                    canceled = rpc(43, "tools/call", reviewed, "cancel")
+                    assert canceled["isError"] and "discarded" in str(canceled)
+                    saved = rpc(44, "tools/call", reviewed, "accept")
+                    expected = expected.replace("최종본".encode(), "공유본".encode()) + "\r\n검토 완료".encode()
+                    assert saved["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
+                    assert rpc(45, "tools/call", dict(name="edit_document", arguments=batch))["isError"]
                     Path("build/runtime/append-latency.json").write_text(json.dumps(timings))
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
