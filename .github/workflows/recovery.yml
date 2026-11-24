@@ -24,4 +24,5 @@ jobs:
           sudo mount -o loop "$image" "$mountpoint"
           trap 'sudo umount "$mountpoint"' EXIT
           sudo python3 tests/workspace_recovery.py target/debug/aios "$mountpoint"
-          sudo python3 tests/agent_policy.py target/debug/aios "$mountpoint"
+          sudo install -m 755 target/debug/aios "$mountpoint/aios"
+          sudo python3 tests/agent_policy.py "$mountpoint/aios" "$mountpoint"
