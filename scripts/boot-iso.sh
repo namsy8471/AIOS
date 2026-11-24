@@ -36,6 +36,7 @@ boot_iso() {
     tr -d '\r' < "$log" > "$out/$platform.log"
     grep -F "AIOS_GRUB_PLATFORM=$platform" "$out/$platform.log"
     grep -Fx 'AIOS: save verified; modal and stale requests stopped' "$out/$platform.log"
+    grep -Fx 'AIOS_GUEST_POLICY_OK allowed=/work denied=/tmp' "$out/$platform.log"
     grep -Fx 'AIOS_BOOT_OK pid=1' "$out/$platform.log"
 }
 boot_iso pc

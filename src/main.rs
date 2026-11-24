@@ -66,6 +66,7 @@ fn main() -> io::Result<std::process::ExitCode> {
     run_demo()?;
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 {
+        verify_guest_policy()?;
         println!("AIOS_BOOT_OK pid=1");
         unsafe extern "C" {
             fn reboot(cmd: std::ffi::c_int) -> std::ffi::c_int;
@@ -75,6 +76,33 @@ fn main() -> io::Result<std::process::ExitCode> {
         return Err(io::Error::last_os_error());
     }
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(target_os = "linux")]
+fn verify_guest_policy() -> io::Result<()> {
+    // Run the same document operation on both sides of the filesystem grant.
+    let worker = |directory: &str| {
+        std::process::Command::new("/init")
+            .args(["restrict-worker", "/usr/bin/aios"])
+            .env("TMPDIR", directory)
+            .output()
+    };
+    let allowed = worker("/work")?;
+    if !allowed.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&allowed.stderr).into_owned(),
+        ));
+    }
+    let denied = worker("/tmp")?;
+    if denied.status.success()
+        || !String::from_utf8_lossy(&denied.stderr).contains("Permission denied")
+    {
+        return Err(io::Error::other(
+            "expected the guest kernel to deny the second write",
+        ));
+    }
+    println!("AIOS_GUEST_POLICY_OK allowed=/work denied=/tmp");
+    Ok(())
 }
 
 #[cfg(test)]

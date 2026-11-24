@@ -4,9 +4,10 @@ kernel=${1:?Pass a readable x86_64 Linux kernel image}
 mkdir -p build
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
-mkdir -p "$root/tmp" "$root/dev"
+mkdir -p "$root/tmp" "$root/dev" "$root/usr/bin" "$root/work"
 cargo build --locked --release --target x86_64-unknown-linux-musl
 cp target/x86_64-unknown-linux-musl/release/aios "$root/init"
+ln "$root/init" "$root/usr/bin/aios"
 # The kernel opens /dev/console before launching PID 1.
 sudo mknod "$root/dev/console" c 5 1
 (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > build/initramfs.gz
