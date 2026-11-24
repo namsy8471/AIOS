@@ -541,18 +541,42 @@ fn document_console(
     let staged = work.join(".aios-note-staging");
     if guest_init && Path::new("/etc/aios-qemu-work-partition").is_file() {
         // This image's second partition is dedicated to documents.
+        let ramdisk = Path::new("/etc/aios-qemu-ramdisk").is_file();
+        if ramdisk {
+            mount_virtual_fs(c"proc", c"/proc")?;
+            if !fs::read_to_string("/proc/cmdline")?
+                .split_ascii_whitespace()
+                .any(|argument| argument == "aios.qemu_document_disk=1")
+            {
+                return Err(io::Error::other(
+                    "reference ramdisk requires the QEMU document disk",
+                ));
+            }
+        }
         let flags = libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
-        if unsafe {
-            libc::mount(
-                c"/dev/sda2".as_ptr(),
-                c"/work".as_ptr(),
-                c"ext4".as_ptr(),
-                flags,
-                std::ptr::null(),
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if unsafe {
+                libc::mount(
+                    c"/dev/sda2".as_ptr(),
+                    c"/work".as_ptr(),
+                    c"ext4".as_ptr(),
+                    flags,
+                    std::ptr::null(),
+                )
+            } == 0
+            {
+                break;
+            }
+            let error = io::Error::last_os_error();
+            // With a ramdisk PID 1 can run before QEMU USB storage is registered.
+            if !ramdisk
+                || !matches!(error.raw_os_error(), Some(libc::ENXIO | libc::ENODEV))
+                || std::time::Instant::now() >= deadline
+            {
+                return Err(error);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
     let stream = !guest_init || Path::new("/etc/aios-stream-worker").is_file();

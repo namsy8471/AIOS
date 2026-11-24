@@ -18,7 +18,8 @@ def system_hash():
         return hashlib.sha256(raw.read(16 * 1024 * 1024)).hexdigest()
 
 
-args = launch(disk, split_disk=True)
+boot_payload = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+args = launch(disk, split_disk=True, boot_payload=boot_payload)
 before = system_hash()
 original = "장보기"
 saved = original + "\n독립 저장"
@@ -30,10 +31,12 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
     ) as vm:
         try:
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
-            assert read_document(vm, revision)["text"] == text
+            assert read_document(vm, revision, log=log)["text"] == text
             if index == 0:
                 reply = command(vm, log, f"append {revision} 독립 저장", "AIOS_")
                 assert reply == f"AIOS_SAVED revision={revisions[1]}", reply
+                stale = command(vm, log, f"append {revision} 거절될 변경", "AIOS_")
+                assert stale == "AIOS_REJECT invalid-edit", stale
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
             assert vm.wait(timeout=20) == 0
@@ -41,4 +44,8 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
             if vm.poll() is None:
                 vm.kill()
     assert system_hash() == before
-print(json.dumps({"system_sha256": before, "after_reboot": saved}, ensure_ascii=False))
+proof = {"system_sha256": before, "after_reboot": saved, "revision": revisions[1]}
+if boot_payload:
+    proof["boot_payload"] = {name: hashlib.sha256((boot_payload / name).read_bytes()).hexdigest()
+                             for name in ("kernel", "ramdisk")}
+print(json.dumps(proof, ensure_ascii=False))

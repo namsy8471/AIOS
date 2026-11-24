@@ -5,12 +5,17 @@ from arm64_model import main
 
 GUEST_RAM_MIB = 256
 
-def launch(disk, guest_model=False, split_disk=False):
-    kernel = Path(__file__).resolve().with_name("kernel")
+def launch(disk, guest_model=False, split_disk=False, *, boot_payload=None):
+    kernel = boot_payload / "kernel" if boot_payload else Path(__file__).resolve().with_name("kernel")
     drive_path = str(disk.resolve()).replace(",", ",,")
     ram_mib = 1536 if guest_model else GUEST_RAM_MIB
     cpus = 4 if guest_model else 1
     root, mode = ("sda1", "ro") if split_disk else ("sda", "rw")
+    cmdline = "earlycon=pl011,0x9000000 console=ttyAMA0 panic=1"
+    boot = ["-append", f"{cmdline} root=/dev/{root} rootfstype=ext4 rootwait {mode} init=/init"]
+    if boot_payload:
+        boot = ["-initrd", str(boot_payload / "ramdisk"), "-append",
+                f"{cmdline} rdinit=/init aios.qemu_document_disk=1"]
     return [
         "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max",
         "-smp", str(cpus), "-m", f"{ram_mib}M", "-nic", "none",
@@ -18,7 +23,7 @@ def launch(disk, guest_model=False, split_disk=False):
         "-serial", "stdio", "-no-reboot", "-kernel", str(kernel),
         "-device", "qemu-xhci,id=xhci", "-drive", f"file={drive_path},if=none,id=docs,format=raw",
         "-device", "usb-storage,bus=xhci.0,drive=docs",
-        "-append", f"earlycon=pl011,0x9000000 console=ttyAMA0 root=/dev/{root} rootfstype=ext4 rootwait {mode} init=/init panic=1",
+        *boot,
     ]
 
 
