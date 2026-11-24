@@ -15,7 +15,9 @@ jobs:
           devices=()
           if test -c /dev/kvm; then devices+=(--device /dev/kvm); fi
           docker run --rm "${devices[@]}" -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc linux-virt musl-dev qemu-system-x86_64 sudo grub-bios grub-efi xorriso mtools dosfstools ovmf
+            apk add --no-cache bash coreutils cpio findutils gcc linux-virt musl-dev qemu-system-x86_64 sudo xorriso mtools dosfstools ovmf
+            # Only the GRUB image tools and modules are needed on the container overlay.
+            apk add --no-cache --no-scripts grub-bios grub-efi
             bash scripts/boot-test.sh /boot/vmlinuz-virt
             if test -c /dev/kvm; then
               bash scripts/boot-test.sh /boot/vmlinuz-virt kvm
