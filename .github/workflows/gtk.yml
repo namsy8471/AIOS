@@ -13,5 +13,12 @@ jobs:
       - name: Observe a GTK save dialog and check the file
         run: |
           sudo apt-get -o Acquire::Retries=1 update -qq
-          sudo apt-get install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi xvfb xauth dbus-x11
+          sudo apt-get install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt5 xvfb xauth dbus-x11
           PATH="/usr/bin:$PATH" GTK_A11Y=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked gtk_modal_blocks_save -- --ignored --nocapture
+          PATH="/usr/bin:$PATH" QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked --test editor_task -- --ignored --nocapture
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --test editor_task -- --ignored --nocapture
