@@ -50,6 +50,9 @@ assemble_driver_image() {
   assemble "$stage/document-with-drivers.cpio.gz" "$destination/$image_name" \
     "$layout" "$destination/payload"
   cp "$stage/module-overlay/order.txt" "$destination/order.txt"
+  if [[ -f $stage/module-overlay/order-without-touch.txt ]]; then
+    cp "$stage/module-overlay/order-without-touch.txt" "$destination/order-without-touch.txt"
+  fi
 }
 
 if [[ $mode == --board-probe ]]; then

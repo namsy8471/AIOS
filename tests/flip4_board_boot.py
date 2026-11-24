@@ -7,15 +7,17 @@ import re
 import subprocess
 
 
-def boot(directory, load_drivers):
+def boot(directory, load_drivers, without_touch=False):
     args = [
         "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max", "-m", "1024M",
         "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot",
         "-kernel", directory / "payload/kernel", "-initrd", directory / "payload/ramdisk",
         "-append", "earlycon=pl011,0x9000000 console=ttyAMA0 rdinit=/init panic=1"
-        + (" aios.qemu_flip4_probe=1" if load_drivers else ""),
+        + (" aios.qemu_flip4_probe=1" if load_drivers else "")
+        + (" aios.qemu_flip4_without_touch=1" if without_touch else ""),
     ]
-    log_path = directory / ("console-drivers.log" if load_drivers else "console-default.log")
+    profile = "without-touch" if without_touch else "drivers" if load_drivers else "default"
+    log_path = directory / f"console-{profile}.log"
     records = {}
     module_results = []
     with log_path.open("wb", buffering=0) as log, subprocess.Popen(
@@ -37,13 +39,21 @@ def boot(directory, load_drivers):
             assert set(records["DEVICES"]) == {"drm", "input", "block"}
             assert "drm_connectors" in records["DISPLAY"]
             if load_drivers:
-                assert records["MODULES"] == {"attempted": True, "exit_code": 0, "error": None}, records
-                order = (directory / "order.txt").read_text().splitlines()
+                assert records["MODULES"] == {
+                    "attempted": True, "exit_code": 0, "error": None,
+                    "touch_modules_enabled": not without_touch,
+                }, records
+                order_file = "order-without-touch.txt" if without_touch else "order.txt"
+                order = (directory / order_file).read_text().splitlines()
+                for module in ("fst2ca78y_i2c.ko", "zinitix_ts.ko"):
+                    assert (module in order) == (not without_touch)
                 assert len(order) == len(set(order)) > 0
                 assert module_results == [(module, 0) for module in order], module_results
                 assert vm.wait(timeout=15) == 0
             else:
-                assert records["MODULES"] == {"attempted": False, "exit_code": None, "error": None}, records
+                assert records["MODULES"] == {
+                    "attempted": False, "exit_code": None, "error": None, "touch_modules_enabled": False,
+                }, records
                 assert not module_results
         finally:
             if vm.poll() is None:
@@ -91,7 +101,9 @@ def pstore_reboot(directory):
     assert first == second == recovered["board"]
     for name in ("modules", "display", "devices"):
         assert records(name.upper()) == [recovered[name]], name
-    assert recovered["modules"] == {"attempted": True, "exit_code": 0, "error": None}
+    assert recovered["modules"] == {
+        "attempted": True, "exit_code": 0, "error": None, "touch_modules_enabled": True,
+    }
     return recovered
 
 
@@ -109,6 +121,7 @@ def main():
         "scope": "qemu_virt", "payload": payload,
         "default": boot(directory, load_drivers=False),
         "driver_opt_in": boot(directory, load_drivers=True),
+        "driver_without_touch": boot(directory, load_drivers=True, without_touch=True),
         "pstore_after_reboot": pstore_reboot(directory),
     }, indent=2))
 

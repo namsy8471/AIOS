@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from flip4_board import PROVIDERS
 
 
-TARGETS = ("msm_drm.ko", "fst2ca78y_i2c.ko", "zinitix_ts.ko", "ufs_qcom.ko")
+TOUCH_TARGETS = ("fst2ca78y_i2c.ko", "zinitix_ts.ko")
+TARGETS = ("msm_drm.ko", *TOUCH_TARGETS, "ufs_qcom.ko")
 
 
 def module_order(dependency_text, targets=TARGETS):
@@ -72,13 +73,20 @@ def main():
             ["cpio", "-i", "--to-stdout", "--quiet", "lib/modules/modules.dep"], input=archive,
         )
         targets = (*PROVIDERS.values(), *TARGETS) if args.board_overlay else TARGETS
-        order = module_order(dependencies.decode(), targets)
+        dependency_text = dependencies.decode()
+        order = module_order(dependency_text, targets)
         paths = [f"lib/modules/{name}" for name in order]
         subprocess.run(["cpio", "-id", "--quiet", "--no-absolute-filenames", "--no-preserve-owner", *paths],
                        input=archive, cwd=root, check=True)
         if any(not (root / path).is_file() or (root / path).is_symlink() for path in paths):
             raise ValueError("The recovery ramdisk did not provide each declared module as a file")
         (root / "module-order").write_text("\n".join(order) + "\n")
+        if args.board_overlay:
+            diagnostic_targets = (*PROVIDERS.values(), "msm_drm.ko", "ufs_qcom.ko")
+            diagnostic_order = module_order(dependency_text, diagnostic_targets)
+            if set(TOUCH_TARGETS).intersection(diagnostic_order):
+                raise ValueError("A diagnostic module depends on a touch firmware update driver")
+            (root / "module-order-without-touch").write_text("\n".join(diagnostic_order) + "\n")
         executable = root / ("usr/bin/flip4-driver-loader" if args.overlay else "init")
         executable.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([os.environ.get("CC", "cc"), "-static", "-O2", "-Wall", "-Wextra", "tests/flip4_module_init.c", "-o", executable], check=True)
@@ -96,6 +104,8 @@ def main():
             (args.output / "recovery-files.txt").write_bytes(files)
         if args.overlay:
             (args.output / "order.txt").write_text("\n".join(order) + "\n")
+            if args.board_overlay:
+                (args.output / "order-without-touch.txt").write_text("\n".join(diagnostic_order) + "\n")
             return
         log = args.output / "console.log"
         with log.open("wb") as output:

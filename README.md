@@ -114,7 +114,9 @@ bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.c
 
 `flip4-board-diagnostics`의 서명되지 않은 참조 이미지는 Android나 문서 디스크 없이 Linux/Rust PID 1을 실행합니다. PID 1은 CAPE SoC 530과 플립4의 터치·디스플레이·UFS 노드를 실행 중인 기기 트리에서 확인한 뒤 참조 모듈을 로드합니다. 커널이 등록한 DRM, 입력, 블록 장치의 번호와 화면 상태를 읽어 직렬 콘솔과 커널 로그에 기록합니다. 진단은 블록 장치를 열지 않습니다. 커널이 pmsg를 제공하면 초기 램디스크 안에 pmsg 문자 장치만 만들고 진단 스냅샷을 예약 RAM에 기록합니다.
 
-`qemu-proof.json`과 부팅 로그는 QEMU의 가상 기기 트리에서 수행한 진단 검증입니다. QEMU의 별도 ramoops 실행은 웜 리부트 뒤 스냅샷을 읽어 원래 보고와 대조합니다. QEMU에서는 명시적인 테스트 인자가 있는 부팅에서만 모듈을 로드합니다. 실기기에서 모듈이 바인딩되는지와 로그를 회수할 수 있는지는 별도 검증이 필요합니다.
+`qemu-proof.json`과 부팅 로그는 QEMU의 가상 기기 트리에서 수행한 진단 검증입니다. QEMU의 별도 ramoops 실행은 웜 리부트 뒤 스냅샷을 읽어 원래 보고와 대조합니다. QEMU에서는 명시적인 테스트 인자가 있는 부팅에서만 모듈을 로드합니다. 실기 진단은 초기 장치 탐색 중 펌웨어를 갱신할 수 있는 STM·Zinitix 모듈을 제외한 순서를 사용합니다. 같은 순서를 QEMU에서도 검증합니다. 실기기에서 모듈이 바인딩되는지와 로그를 회수할 수 있는지는 별도 검증이 필요합니다. [STM 갱신 경로](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/stm_fst2ca78y_i2c/stm_fw.c#L1048) · [Zinitix 갱신 경로](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/touchscreen_fold/zinitix/ztw522/zinitix_ts.c#L1735)
+
+두 펌웨어 이름은 공개 커뮤니티 B4Q 파일과 일치합니다. STM 터치용 `fst2ca78y_b4.bin`의 SHA-256은 `6a72cf52fba1b156008fa384eb2e8c8db44321d593a6c97b0e3cacdc6a6c00cb`이고, 커버 터치용 `ztw522_b4.bin`은 `c6aa076fe2741b2cadf975abdf8e40d22e8776b0385aebc0d077d0ca618482ae`입니다. 실물 펌웨어와의 호환성은 확인이 필요하며 두 파일은 AIOS 진단 이미지에 포함되지 않습니다. [STM 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_stm/fst2ca78y_b4.bin) · [Zinitix 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_zinitix/ztw522_b4.bin)
 
 ### 플립4 커널로 가상 메모장 실행
 

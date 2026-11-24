@@ -110,6 +110,7 @@ jobs:
             build/flip4/native-board-probe/aios-flip4-board-probe-unsigned.img
             build/flip4/native-board-probe/layout.json
             build/flip4/native-board-probe/order.txt
+            build/flip4/native-board-probe/order-without-touch.txt
             build/flip4/native-board-probe/qemu-proof.json
             build/flip4/native-board-probe/console-*.log
       - uses: actions/upload-artifact@v4

@@ -139,13 +139,26 @@ fn probe() -> io::Result<Option<libc::c_int>> {
         }
     }
     let load_drivers = scope == "cape_flip4_candidate" || (scope == "qemu_virt" && qemu_opt_in);
-    let loader = load_drivers.then(|| Command::new("/usr/bin/flip4-driver-loader").status());
+    // Both recovery touchscreen drivers can update controller firmware on probe.
+    let without_touch = scope == "cape_flip4_candidate"
+        || (scope == "qemu_virt"
+            && cmdline
+                .split_ascii_whitespace()
+                .any(|arg| arg == "aios.qemu_flip4_without_touch=1"));
+    let loader = load_drivers.then(|| {
+        let mut command = Command::new("/usr/bin/flip4-driver-loader");
+        if without_touch {
+            command.arg("--without-touch");
+        }
+        command.status()
+    });
     let (exit_code, error) = match loader {
         Some(Ok(status)) => (status.code(), None),
         Some(Err(error)) => (None, Some(error.to_string())),
         None => (None, None),
     };
-    let modules = json!({"attempted":load_drivers, "exit_code":exit_code, "error":error});
+    let modules = json!({"attempted":load_drivers, "exit_code":exit_code, "error":error,
+        "touch_modules_enabled":load_drivers && !without_touch});
     emit("MODULES", modules.clone());
     let display = hardware::display_capabilities()?;
     let devices = hardware::device_numbers()?;
