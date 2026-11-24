@@ -43,7 +43,10 @@ def gtk_editor(path):
 
     save.connect("clicked", persist)
     layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    layout.pack_start(body, True, True, 0)
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+    scroll.add(body)
+    layout.pack_start(scroll, True, True, 0)
     layout.pack_start(save, False, False, 0)
     window.add(layout)
 
