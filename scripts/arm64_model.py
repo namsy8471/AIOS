@@ -79,11 +79,11 @@ def edit(vm, log, port, instruction, revision):
     return run_model(port, instruction, catalog, partial(console_tool, vm, log, {}), state)
 
 
-def read_document(vm, revision):
+def read_document(vm, revision, log=None):
     chunks = []
     offset = 0
     while offset is not None:
-        response = command(vm, None, f"read {revision} {offset} 512", "AIOS_")
+        response = command(vm, log, f"read {revision} {offset} 512", "AIOS_")
         if not response.startswith("AIOS_PAGE "):
             raise RuntimeError(response)
         page = json.loads(response.removeprefix("AIOS_PAGE "))

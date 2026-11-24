@@ -9,8 +9,8 @@ import time
 
 
 bundle, initramfs, disk, output = map(Path, sys.argv[1:5])
-local_model = sys.argv[5:] == ["--model"]
-multitouch = sys.argv[5:] == ["--multitouch"]
+local_model = "--model" in sys.argv[5:]
+multitouch = "--multitouch" in sys.argv[5:]
 monitor = disk.with_suffix(".qmp")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
@@ -136,11 +136,17 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 addition = "내일 아침에 우유와 사과를 사서 냉장고에 넣어 두기" if multitouch else "우유"
                 request = f"confirm-append {before} {addition}"
                 assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
+                if multitouch:
+                    preview = output / "long-preview.ppm"
+                    capture_frame(stream, preview, ("38425a", "12192d", "204caf"), 0.79)
+                    report["preview_visible_rows"] = preview_lines(preview)
+                    assert report["preview_visible_rows"] >= 2, report
                 tap(stream, 8192, 24576)
                 assert wait(vm, log, "AIOS_") == "AIOS_REJECT confirmation-canceled"
                 assert read_document(vm, before)["text"] == original
 
                 if local_model:
+                    addition = "우유"
                     instruction = "메모에 '우유'를 적어줘."
                     usage = command(vm, log, f"model-confirm-append {before} {instruction}", "MODEL_USAGE ")
                     report["model_usage"] = json.loads(usage.removeprefix("MODEL_USAGE "))
@@ -150,8 +156,6 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 preview = output / "confirmation.ppm"
                 capture_frame(stream, preview, ("38425a", "12192d", "204caf"), 0.79)
                 if multitouch:
-                    report["preview_visible_rows"] = preview_lines(preview)
-                    assert report["preview_visible_rows"] >= 2, report
                     contact(stream, 0, 1, 24576, 24576)
                     contact(stream, 1, 2, 8192, 24576)
                     contact(stream, 0, -1)
@@ -169,7 +173,24 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
         vm.stdin.write(b"poweroff\n")
         vm.stdin.flush()
         assert vm.wait(timeout=20) == 0
-        (output / "display.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     finally:
         if vm.poll() is None:
             vm.kill()
+
+if local_model and multitouch:
+    args = launch(bundle, disk, display="none", model=local_model, multitouch=multitouch, initramfs=initramfs)
+    with (output / "reboot.log").open("wb", buffering=0) as log, subprocess.Popen(
+        args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    ) as vm:
+        try:
+            wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+            report["reopened_note"] = read_document(vm, revision, log=log)
+            assert report["reopened_note"] == report["confirmed_note"]
+            vm.stdin.write(b"poweroff\n")
+            vm.stdin.flush()
+            assert vm.wait(timeout=20) == 0
+        finally:
+            if vm.poll() is None:
+                vm.kill()
+
+(output / "display.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

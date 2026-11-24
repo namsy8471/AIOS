@@ -54,13 +54,13 @@ jobs:
           name: aios-arm64-display-package
           path: build/arm64-display-package
       - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build
-      - name: Review a local model edit on the guest display
+      - name: Review and reopen a local model edit on the Flip4-sized display
         run: |
           bundle=build/arm64-display-package
           proof=build/arm64-model-display
           mkdir -p "$proof"
           bash scripts/flip4-model-disk.sh "$bundle" "$bundle/model-work.raw" flat
-          timeout 420s python3 tests/arm64_drm.py "$bundle" "$bundle/display-initramfs" "$bundle/model-work.raw" "$proof" --model
+          timeout 420s python3 tests/arm64_drm.py "$bundle" "$bundle/display-initramfs" "$bundle/model-work.raw" "$proof" --model --multitouch
           debugfs -R 'cat /work/note.txt' "$bundle/model-work.raw" > "$proof/saved.txt"
           printf '작업 기록\n우유' | cmp - "$proof/saved.txt"
       - uses: actions/upload-artifact@v4
