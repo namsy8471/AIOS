@@ -31,6 +31,8 @@ jobs:
       - name: Cancel a saved edit and reopen it in a fresh GTK process
         run: |
           cargo build --locked
+          python3 -m venv "$RUNNER_TEMP/mcp-env"
+          "$RUNNER_TEMP/mcp-env/bin/pip" install -q -r runtime/requirements.txt
           image=$(mktemp "$RUNNER_TEMP/aios-gtk-XXXXXX")
           mountpoint=$(mktemp -d)
           truncate -s 256M "$image"
@@ -38,6 +40,7 @@ jobs:
           sudo mount -o loop "$image" "$mountpoint"
           trap 'sudo umount "$mountpoint"' EXIT
           sudo /usr/bin/python3 tests/gtk_recovery.py target/debug/aios "$mountpoint"
+          sudo "$RUNNER_TEMP/mcp-env/bin/python" tests/mcp_document.py "$mountpoint/aios" "$mountpoint"
   windows:
     runs-on: windows-2022
     timeout-minutes: 5

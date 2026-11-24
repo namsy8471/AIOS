@@ -39,6 +39,7 @@ def verify(binary, mount):
     (work / "note.txt").write_bytes(original)
     tools = mount / "gtk-tools"
     tools.mkdir()
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "runtime" / "atspi.py", tools / "atspi.py")
     for name in ["gtk_recovery.py", "linux_editor_driver.py", "editor_fixture.py"]:
         shutil.copyfile(Path(__file__).with_name(name), tools / name)
     for decision, status, expected in [("cancel", 23, original),
