@@ -9,9 +9,11 @@ def launch(disk, guest_model=False):
     kernel = Path(__file__).resolve().with_name("kernel")
     drive_path = str(disk.resolve()).replace(",", ",,")
     ram_mib = 1536 if guest_model else GUEST_RAM_MIB
+    cpus = 4 if guest_model else 1
     return [
         "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max",
-        "-m", f"{ram_mib}M", "-nic", "none", "-display", "none", "-monitor", "none",
+        "-smp", str(cpus), "-m", f"{ram_mib}M", "-nic", "none",
+        "-display", "none", "-monitor", "none",
         "-serial", "stdio", "-no-reboot", "-kernel", str(kernel),
         "-device", "qemu-xhci,id=xhci", "-drive", f"file={drive_path},if=none,id=docs,format=raw",
         "-device", "usb-storage,bus=xhci.0,drive=docs",
