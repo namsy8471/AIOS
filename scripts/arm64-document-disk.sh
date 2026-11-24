@@ -37,5 +37,13 @@ kernel/drivers/input/evdev.ko*
 kernel/drivers/virtio/virtio_input.ko*
 EOF
 mkinitfs -P "$stage/features" -F 'base virtio ext4 display' -o "$stage/display-initramfs" "${modules[0]##*/}"
-cp "$bundle/starter.raw" "$stage/display.raw"
+cc -O2 -Wall -Wextra $(pkg-config --cflags libdrm) src/display-frame.c \
+  -o "$stage/root/usr/bin/display-frame" $(pkg-config --libs libdrm)
+while IFS= read -r library; do
+  install -Dm755 "$library" "$stage/root$library"
+done < <(ldd "$stage/root/usr/bin/display-frame" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u)
+mkdir "$stage/root/dev/dri"
+mknod -m 600 "$stage/root/dev/dri/card0" c 226 0
+truncate -s 48M "$stage/display.raw"
+mkfs.ext4 -q -F -d "$stage/root" "$stage/display.raw"
 timeout 90s python3 tests/arm64_drm.py "$bundle" "$stage/display-initramfs" "$stage/display.raw" "$display"

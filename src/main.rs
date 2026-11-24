@@ -492,6 +492,14 @@ fn document_console(
             }
             continue;
         }
+        if line == "display-frame" && guest_init {
+            let status = std::process::Command::new("/usr/bin/display-frame").status();
+            match status {
+                Ok(code) if code.success() => println!("AIOS_FRAME_DONE"),
+                _ => println!("AIOS_REJECT display-frame-unavailable"),
+            }
+            continue;
+        }
         let original = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {

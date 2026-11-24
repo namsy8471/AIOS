@@ -11,7 +11,7 @@ jobs:
       - name: Boot the minimal Rust core on an emulated ARM64 Cortex-A53
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc binutils linux-virt musl-dev qemu-system-aarch64 qemu-hw-display-virtio-gpu-pci sudo python3 e2fsprogs e2fsprogs-extra
+            apk add --no-cache bash coreutils cpio findutils gcc binutils linux-virt musl-dev qemu-system-aarch64 qemu-hw-display-virtio-gpu-pci sudo python3 e2fsprogs e2fsprogs-extra libdrm-dev pkgconf
             bash scripts/boot-test.sh /boot/vmlinuz-virt
             bash scripts/arm64-early-init.sh /boot/vmlinuz-virt build/early-init
             bash scripts/arm64-document-disk.sh
