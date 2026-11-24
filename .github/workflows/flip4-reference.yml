@@ -1,0 +1,27 @@
+name: Flip4 reference kernel probe
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned community kernel
+        run: |
+          mkdir -p build/flip4
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/rainbowdashh/android_device_samsung_b4q/fbe65008eff1589606ee3164a0ef91ef8b124894/prebuilt/kernel -o build/flip4/kernel
+          echo '532c5c371892f23fe8b68408a4aa4febc451afc62e25e680c94b548bd2d04fa1  build/flip4/kernel' | sha256sum -c -
+      - name: Attempt a diskless boot on QEMU virt
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
+            apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64
+            cargo build --locked --release --target aarch64-unknown-linux-musl
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flip4-reference-probe-log
+          path: build/flip4/probe/console.log
