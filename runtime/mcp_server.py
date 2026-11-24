@@ -7,7 +7,7 @@ from typing import Literal
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel
 
-from document import append_bytes, digest, read_document
+from document import MAX_BYTES, append_bytes, digest, read_document
 
 
 class DocumentRevision(BaseModel):
@@ -37,46 +37,21 @@ def create_server(binary, workspace, filename):
                for name in ("gtk", "qt")}
     editors["qt"] = (runtime / "document.py").read_text(encoding="utf-8") + "\n" + editors["qt"]
     mcp = FastMCP("AIOS documents", instructions=(
-        f"This session can edit only {filename!r}. Use read_text and direct append_line for "
+        f"This session can edit only {filename!r}. Use read_text, replace_text and direct append_line for "
         "document work. Select gtk or qt only for tasks requiring an editor UI."))
 
-    @mcp.tool()
-    def inspect_document() -> DocumentRevision:
-        """Return the authorized filename, UTF-8 byte count and current SHA-256 revision."""
-        data = read_document(document_path)
-        return DocumentRevision(document=filename, bytes=len(data), revision=digest(data))
-
-    @mcp.tool()
-    def read_text(document: str, revision: str, offset: int = 0, limit: int = 4096) -> DocumentPage:
-        """Read a revision in Unicode code points. Follow next_offset until it is null."""
+    def checked_document(document, revision):
         if document != filename:
             raise ValueError("Document is outside this session's grant")
         data = read_document(document_path)
         if revision != digest(data):
             raise ValueError("Document revision changed; inspect again")
-        text = data.decode("utf-8")
-        if not 0 <= offset <= len(text) or not 1 <= limit <= 8192:
-            raise ValueError("Expected a valid character offset and a limit from 1 to 8192")
-        end = min(len(text), offset + limit)
-        return DocumentPage(document=filename, revision=revision, bytes=len(data),
-                            text=text[offset:end], next_offset=end if end < len(text) else None)
+        return data
 
-    @mcp.tool()
-    async def append_line(document: str, revision: str, line: str, ctx: Context,
-                          editor: Literal["direct", "gtk", "qt"] = "direct", review: bool = False) -> DocumentRevision:
-        """Append directly by default. Select gtk or qt for UI work, or review to confirm the save."""
-        if document != filename:
-            raise ValueError("Document is outside this session's grant")
-        original = read_document(document_path)
-        if revision != digest(original):
-            raise ValueError("Document revision changed; inspect again")
-        expected = append_bytes(original, line)
-        if editor == "direct":
-            profile = "agent-run"
-            args = ["--aios-append", filename, revision, expected[len(original):].decode(), digest(expected)]
-        else:
-            profile = "agent-gui-run"
-            args = ["/usr/bin/python3", "-I", "-c", worker, editors[editor], editor, filename, revision, line]
+    def edit_args(revision, offset, removed, inserted, expected):
+        return ["--aios-edit", filename, revision, str(offset), str(removed), inserted, digest(expected)]
+
+    async def publish(profile, args, ctx, review, expected, prompt):
         process = await asyncio.create_subprocess_exec(
             binary, profile, workspace, *(["--review"] if review else []), "--", *args,
             stdin=asyncio.subprocess.PIPE if review else asyncio.subprocess.DEVNULL,
@@ -84,7 +59,7 @@ def create_server(binary, workspace, filename):
         try:
             if review and await asyncio.wait_for(process.stdout.readline(), 45) == b"AIOS_REVIEW_READY\n":
                 decision = await asyncio.wait_for(ctx.elicit(
-                    f"Save the staged {editor} edit to {filename}? Appended line: {line}",
+                    prompt,
                     SaveDecision), timeout=110)
                 approved = decision.action == "accept" and decision.data.save
                 process.stdin.write(b"Y" if approved else b"N")
@@ -105,6 +80,56 @@ def create_server(binary, workspace, filename):
         if code != 0:
             raise RuntimeError("Session failed; inspect the document revision before retrying")
         return DocumentRevision(document=filename, bytes=len(expected), revision=digest(expected))
+
+    @mcp.tool()
+    def inspect_document() -> DocumentRevision:
+        """Return the authorized filename, UTF-8 byte count and current SHA-256 revision."""
+        data = read_document(document_path)
+        return DocumentRevision(document=filename, bytes=len(data), revision=digest(data))
+
+    @mcp.tool()
+    def read_text(document: str, revision: str, offset: int = 0, limit: int = 4096) -> DocumentPage:
+        """Read a revision in Unicode code points. Follow next_offset until it is null."""
+        data = checked_document(document, revision)
+        text = data.decode("utf-8")
+        if not 0 <= offset <= len(text) or not 1 <= limit <= 8192:
+            raise ValueError("Expected a valid character offset and a limit from 1 to 8192")
+        end = min(len(text), offset + limit)
+        return DocumentPage(document=filename, revision=revision, bytes=len(data),
+                            text=text[offset:end], next_offset=end if end < len(text) else None)
+
+    @mcp.tool()
+    async def append_line(document: str, revision: str, line: str, ctx: Context,
+                          editor: Literal["direct", "gtk", "qt"] = "direct", review: bool = False) -> DocumentRevision:
+        """Append directly by default. Select gtk or qt for UI work, or review to confirm the save."""
+        original = checked_document(document, revision)
+        expected = append_bytes(original, line)
+        if editor == "direct":
+            profile = "agent-run"
+            args = edit_args(revision, len(original), 0, expected[len(original):].decode(), expected)
+        else:
+            profile = "agent-gui-run"
+            args = ["/usr/bin/python3", "-I", "-c", worker, editors[editor], editor, filename, revision, line]
+        return await publish(profile, args, ctx, review, expected,
+                             f"Save the staged {editor} edit to {filename}? Appended line: {line}")
+
+    @mcp.tool()
+    async def replace_text(document: str, revision: str, old: str, new: str, ctx: Context,
+                           review: bool = False) -> DocumentRevision:
+        """Replace one exact, unique passage. Use an empty replacement to delete it."""
+        data = checked_document(document, revision)
+        before, after = old.encode(), new.encode()
+        if not before or max(len(before), len(after)) > 8192 or b"\0" in after:
+            raise ValueError("Expected a nonempty search and UTF-8 passages up to 8192 bytes")
+        start = data.find(before)
+        if start < 0 or data.find(before, start + 1) >= 0:
+            raise ValueError("Expected exactly one matching passage")
+        expected = data[:start] + after + data[start + len(before):]
+        if len(expected) > MAX_BYTES:
+            raise ValueError("Result exceeds 4 MiB")
+        args = edit_args(revision, start, len(before), new, expected)
+        return await publish("agent-run", args, ctx, review, expected,
+                             f"Save this replacement in {filename}? Before: {old} After: {new}")
 
     return mcp
 

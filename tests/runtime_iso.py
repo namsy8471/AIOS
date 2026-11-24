@@ -121,6 +121,12 @@ with tempfile.TemporaryDirectory() as temp:
                             timings[path].append((time.perf_counter_ns() - start) / 1e6)
                             expected += b"\r\n" + suffix.encode()
                             assert result["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
+                    print("append_ms", json.dumps(timings))
+                    replacement = dict(document="note.txt", revision=hashlib.sha256(expected).hexdigest(),
+                                       old="직접 편집 검토", new="최종본")
+                    saved = rpc(40, "tools/call", dict(name="replace_text", arguments=replacement))
+                    expected = expected.replace(replacement["old"].encode(), replacement["new"].encode())
+                    assert saved["structuredContent"]["revision"] == hashlib.sha256(expected).hexdigest()
                     Path("build/runtime/append-latency.json").write_text(json.dumps(timings))
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()

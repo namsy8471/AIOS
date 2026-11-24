@@ -1,6 +1,6 @@
 # AIOS
 
-Computer Use 에이전트를 위한 Linux 커널 기반 Rust 실행 환경을 만드는 학습 프로젝트입니다.
+Computer Use 에이전트를 위한 Linux 커널 기반 Rust 실행 환경을 만드는 학습 프로젝트입니다. AI가 문서와 앱 기능을 구조화된 도구로 직접 쓰는 것을 우선합니다. 화면이 필요한 작업에는 앱의 접근성 API를 통해 본문과 버튼을 조작합니다.
 
 ## 첫 번째 실험
 
@@ -79,7 +79,7 @@ Linux 호스트에서 MCP 클라이언트의 stdio 서버로 `runtime/mcp_server
 /opt/aios/venv/bin/python /opt/aios/runtime/mcp_server.py --aios /usr/local/bin/aios --workspace /srv/aios/documents --document note.txt
 ```
 
-운영자가 시작할 때 지정한 기존 UTF-8 문서 하나에 편집 권한이 부여됩니다. `inspect_document`는 파일명과 바이트 수, SHA-256 버전을 반환합니다. 클라이언트가 그 파일명과 버전, 추가할 한 줄을 `append_line`에 보내면 기본 편집기인 GTK로 저장하고 작업 사본의 바이트를 확인합니다. `editor`에 `qt`를 지정하면 Qt 6 편집기를 사용합니다. 오래된 버전으로 재호출하면 중복 추가가 거절됩니다. 파일은 최대 4 MiB, 한 줄은 최대 8 KiB이며 작업 폴더는 전용 Btrfs 서브볼륨입니다.
+운영자가 시작할 때 지정한 기존 UTF-8 문서 하나에 편집 권한이 부여됩니다. `inspect_document`는 파일명과 바이트 수, SHA-256 버전을 반환합니다. `read_text`는 해당 버전의 본문을 유니코드 문자 단위로 나눠 반환합니다. `append_line`은 기본적으로 격리된 Rust 작업자가 한 줄을 직접 추가합니다. `replace_text`는 정확히 한 번 일치하는 구절을 바꾸거나 삭제합니다. 두 작업 모두 스냅샷에서 버전을 다시 확인하고 저장한 바이트를 검증합니다. 편집기 동작을 사용하려면 `append_line`의 `editor`에 `gtk` 또는 `qt`를 지정합니다. 오래된 버전으로 재호출하면 중복 추가가 거절됩니다. 파일은 최대 4 MiB, 한 줄은 최대 8 KiB이며 작업 폴더는 전용 Btrfs 서브볼륨입니다.
 
 클라이언트가 MCP 입력 요청(form elicitation)을 지원하면 `review: true`로 저장을 검토할 수 있습니다. 편집기가 작업 사본에 쓴 바이트를 확인한 뒤 MCP 서버가 저장 여부를 묻습니다. 클라이언트가 수락하고 `save`를 참으로 보내면 변경이 원본에 반영됩니다. 취소하거나 응답 시간이 지나면 작업 사본을 폐기합니다.
 

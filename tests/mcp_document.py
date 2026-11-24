@@ -25,7 +25,7 @@ async def verify(binary, mount):
     async with stdio_client(params) as streams, ClientSession(*streams) as client:
         await client.initialize()
         listing = await client.list_tools()
-        assert {tool.name for tool in listing.tools} == {"inspect_document", "read_text", "append_line"}
+        assert {tool.name for tool in listing.tools} == {"inspect_document", "read_text", "append_line", "replace_text"}
         inspected = await client.call_tool("inspect_document", {})
         assert not inspected.isError
         rev = inspected.structuredContent["revision"]
@@ -51,6 +51,14 @@ async def verify(binary, mount):
         assert replay.isError and document.read_bytes() == expected
         stale_page = await client.call_tool("read_text", dict(document=filename, revision=rev))
         assert stale_page.isError
+        change = dict(document=filename, revision=saved.structuredContent["revision"], new="수정")
+        for old in ["", "줄", "없는 내용"]:
+            denied = await client.call_tool("replace_text", {**change, "old": old})
+            assert denied.isError and document.read_bytes() == expected
+        replaced = await client.call_tool("replace_text", {**change, "old": "둘째 줄"})
+        updated = expected.replace("둘째 줄".encode(), "수정".encode())
+        assert replaced.structuredContent["revision"] == hashlib.sha256(updated).hexdigest()
+        assert document.read_bytes() == updated
         assert outside.read_bytes() == b"original"
     print("MCP client verified paged read, direct save, CRLF, scoped grant and stale revision rejection")
 

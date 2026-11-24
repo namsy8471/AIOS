@@ -1,4 +1,4 @@
-//! Apply a broker-validated suffix to the staged document after Landlock setup.
+//! Apply a broker-validated text edit to the staged document after Landlock setup.
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -19,10 +19,10 @@ fn contents(file: &mut File) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub fn append(args: &[OsString]) -> io::Result<ExitCode> {
-    let [filename, observed, suffix, expected] = args else {
+pub fn edit(args: &[OsString]) -> io::Result<ExitCode> {
+    let [filename, observed, offset, removed, inserted, expected] = args else {
         return Err(io::Error::other(
-            "expected document, revision, suffix and resulting revision",
+            "expected document, revision, byte range, inserted text and resulting revision",
         ));
     };
     let name = Path::new(filename);
@@ -31,7 +31,7 @@ pub fn append(args: &[OsString]) -> io::Result<ExitCode> {
     }
     let mut file = OpenOptions::new()
         .read(true)
-        .append(true)
+        .write(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(Path::new("/work").join(name))?;
     let info = file.metadata()?;
@@ -44,13 +44,30 @@ pub fn append(args: &[OsString]) -> io::Result<ExitCode> {
     if observed.to_str() != Some(&format!("{:x}", Sha256::digest(&original))) {
         return Ok(ExitCode::from(42));
     }
-    let suffix = suffix
+    let number = |arg: &OsString| {
+        arg.to_str()
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(|| io::Error::other("invalid byte range"))
+    };
+    let start = number(offset)?;
+    let end = start
+        .checked_add(number(removed)?)
+        .ok_or_else(|| io::Error::other("invalid byte range"))?;
+    let text = std::str::from_utf8(&original).map_err(io::Error::other)?;
+    let insert = inserted
         .to_str()
-        .ok_or_else(|| io::Error::other("expected UTF-8 suffix"))?;
-    if suffix.len() > 8194 || original.len() + suffix.len() > MAX_BYTES {
-        return Err(io::Error::other("append exceeds the size limit"));
+        .ok_or_else(|| io::Error::other("invalid UTF-8"))?;
+    if !text.is_char_boundary(start)
+        || !text.is_char_boundary(end)
+        || insert.len() > 8194
+        || original.len() - (end - start) + insert.len() > MAX_BYTES
+    {
+        return Err(io::Error::other("invalid edit range or size"));
     }
-    file.write_all(suffix.as_bytes())?;
+    file.seek(io::SeekFrom::Start(start as u64))?;
+    file.write_all(insert.as_bytes())?;
+    file.write_all(&original[end..])?;
+    file.set_len((original.len() - (end - start) + insert.len()) as u64)?;
     if expected.to_str() != Some(&format!("{:x}", Sha256::digest(contents(&mut file)?))) {
         return Err(io::Error::other("staged contents failed verification"));
     }

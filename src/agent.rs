@@ -184,8 +184,8 @@ pub fn exec_worker(args: &[OsString], desktop: bool) -> io::Result<std::process:
             "document policy could not be fully enforced",
         ));
     }
-    if !desktop && program == "--aios-append" {
-        return crate::document::append(&args[1..]);
+    if !desktop && program == "--aios-edit" {
+        return crate::document::edit(&args[1..]);
     }
     if desktop {
         let mut compositor = Command::new("/usr/bin/weston")
