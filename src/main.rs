@@ -74,7 +74,7 @@ fn kernel_capabilities() -> serde_json::Value {
 fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
-        return document_console(Path::new("/work"), true);
+        return document_console(Path::new("/work"), true, Some(Path::new("/opt/model")));
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/aios-boot-probe").is_file() {
@@ -104,9 +104,21 @@ fn main() -> io::Result<std::process::ExitCode> {
             let work = args
                 .next()
                 .ok_or_else(|| io::Error::other("expected a workspace directory"))?;
-            if args.next().is_some() {
-                return Err(io::Error::other("expected only a workspace directory"));
-            }
+            let model = match args.next() {
+                None => None,
+                Some(flag) if flag == "--model-dir" => {
+                    let directory = args
+                        .next()
+                        .ok_or_else(|| io::Error::other("expected a model directory"))?;
+                    if args.next().is_some() || unsafe { libc::geteuid() } == 0 {
+                        return Err(io::Error::other(
+                            "standalone model mode requires an unprivileged invocation and one model directory",
+                        ));
+                    }
+                    Some(fs::canonicalize(directory)?)
+                }
+                Some(_) => return Err(io::Error::other("expected optional --model-dir DIRECTORY")),
+            };
             let work = Path::new(&work);
             let directory = fs::File::open(work)?;
             if !directory.metadata()?.is_dir() {
@@ -115,7 +127,7 @@ fn main() -> io::Result<std::process::ExitCode> {
             if unsafe { libc::flock(directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
                 return Err(io::Error::last_os_error());
             }
-            let result = document_console(work, false);
+            let result = document_console(work, false, model.as_deref());
             drop(directory);
             return result;
         }
@@ -316,7 +328,7 @@ fn korean_append(instruction: &str) -> Option<&str> {
 }
 
 #[cfg(target_os = "linux")]
-fn model_append_text(instruction: &str) -> io::Result<String> {
+fn model_append_text(instruction: &str, model: &Path, guest_init: bool) -> io::Result<String> {
     use std::io::Read;
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::process::{ExitStatus, Stdio};
@@ -330,18 +342,15 @@ fn model_append_text(instruction: &str) -> io::Result<String> {
         "<|im_start|>system\nExtract the exact text to append from the Korean memo request. Output only that text without quotes. For example: 메모에 사과를 적어줘 -> 사과<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
     );
     let started = std::time::Instant::now();
-    let mut child = std::process::Command::new("/opt/model/llama-simple")
-        .args([
-            "-m",
-            "/opt/model/model.gguf",
-            "-ngl",
-            "0",
-            "-n",
-            "24",
-            &prompt,
-        ])
-        .uid(65534)
-        .gid(65534)
+    let mut command = std::process::Command::new(model.join("llama-simple"));
+    if guest_init {
+        command.uid(65534).gid(65534);
+    }
+    let mut child = command
+        .arg("-m")
+        .arg(model.join("model.gguf"))
+        .args(["-ngl", "0", "-n", "24", &prompt])
+        .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -378,7 +387,11 @@ fn model_append_text(instruction: &str) -> io::Result<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn document_console(work: &Path, guest_init: bool) -> io::Result<std::process::ExitCode> {
+fn document_console(
+    work: &Path,
+    guest_init: bool,
+    model: Option<&Path>,
+) -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
     use std::io::BufRead;
     let path = work.join("note.txt");
@@ -466,10 +479,8 @@ fn document_console(work: &Path, guest_init: bool) -> io::Result<std::process::E
         }
         let generated;
         let korean = line.strip_prefix("korean ");
-        let allow_model = guest_init
-            .then(|| line.strip_prefix("model-append "))
-            .flatten();
-        let edit = if let Some(request) = korean.or(allow_model) {
+        let model_request = line.strip_prefix("model-append ").zip(model);
+        let edit = if let Some(request) = korean.or(model_request.map(|(request, _)| request)) {
             let Some((revision, instruction)) = request.split_once(' ') else {
                 println!("AIOS_REJECT invalid-request");
                 continue;
@@ -487,8 +498,8 @@ fn document_console(work: &Path, guest_init: bool) -> io::Result<std::process::E
             }
             if let Some(text) = korean_append(instruction) {
                 Some((revision, text))
-            } else if allow_model.is_some() {
-                match model_append_text(instruction) {
+            } else if let Some((_, model_dir)) = model_request {
+                match model_append_text(instruction, model_dir, guest_init) {
                     Ok(text) => generated = text,
                     Err(error) => {
                         println!("AIOS_REJECT {error}");
