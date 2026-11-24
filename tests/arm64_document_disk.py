@@ -27,6 +27,12 @@ for boot, expected in enumerate((original, saved, durable), 1):
     ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
+            reply = command(vm, log, "memory", "AIOS_")
+            assert reply.startswith("AIOS_MEMORY "), reply
+            memory = json.loads(reply.removeprefix("AIOS_MEMORY "))
+            assert 0 < memory["available_kib"] <= memory["total_kib"] <= 128 * 1024
+            assert 0 < memory["init_rss_kib"] < memory["total_kib"]
+            print(f"ARM64 boot {boot} ready memory: {memory}", flush=True)
             result = command(vm, log, "inspect", "AIOS_DOCUMENT ")
             assert result == f"AIOS_DOCUMENT revision={revision(expected)} bytes={len(expected.encode())}", result
             observed = result.split()[1].split("=")[1]

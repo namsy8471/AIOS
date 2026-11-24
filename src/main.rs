@@ -140,6 +140,13 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             }
             return Err(io::Error::last_os_error());
         }
+        if line == "memory" {
+            match guest_memory() {
+                Ok(report) => println!("AIOS_MEMORY {report}"),
+                Err(error) => println!("AIOS_REJECT memory-unavailable {error}"),
+            }
+            continue;
+        }
         let original = fs::read_to_string(path)?;
         let observed = format!("{:x}", Sha256::digest(original.as_bytes()));
         if line == "inspect" {
@@ -200,6 +207,26 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         println!("AIOS_SAVED revision={expected}");
     }
     Err(io::Error::other("Document console lost its input"))
+}
+
+#[cfg(target_os = "linux")]
+fn guest_memory() -> io::Result<serde_json::Value> {
+    fn kib(report: &str, key: &str) -> io::Result<u64> {
+        report
+            .lines()
+            .find_map(|line| {
+                let value = line.strip_prefix(key)?.strip_suffix(" kB")?;
+                value.trim().parse().ok()
+            })
+            .ok_or_else(|| io::Error::other(format!("missing memory counter {key}")))
+    }
+    let system = fs::read_to_string("/proc/meminfo")?;
+    let process = fs::read_to_string("/proc/self/status")?;
+    Ok(serde_json::json!({
+        "total_kib": kib(&system, "MemTotal:")?,
+        "available_kib": kib(&system, "MemAvailable:")?,
+        "init_rss_kib": kib(&process, "VmRSS:")?,
+    }))
 }
 
 #[cfg(target_os = "linux")]
