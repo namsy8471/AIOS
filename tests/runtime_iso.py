@@ -83,9 +83,9 @@ with tempfile.TemporaryDirectory() as temp:
             output.join()
             print(Path("build/runtime/console.log").read_text(errors="replace")[-7500:])
     assert "AIOS_RUNTIME_STOPPED" in Path("build/runtime/console.log").read_text(errors="replace")
-    run(["sudo", "mount", "-o", "loop,ro,nologreplay", disk, mount], check=True)
-    try:
-        assert note.read_bytes() == expected
-    finally:
-        run(["sudo", "umount", mount], check=True)
+    # Read the offline filesystem directly, including the documents subvolume.
+    restored = base / "restored"
+    restored.mkdir()
+    run(["btrfs", "restore", "-s", disk, restored], check=True)
+    assert (restored / "documents/note.txt").read_bytes() == expected
     print("Verified persisted UTF-8 bytes and stale request rejection")
