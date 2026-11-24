@@ -473,6 +473,63 @@ fn mount_virtual_fs(kind: &std::ffi::CStr, path: &std::ffi::CStr) -> io::Result<
 }
 
 #[cfg(target_os = "linux")]
+struct DisplaySession {
+    child: std::process::Child,
+    replies: io::BufReader<std::process::ChildStdout>,
+}
+
+#[cfg(target_os = "linux")]
+impl DisplaySession {
+    fn request(session: &mut Option<Self>, text: &str) -> io::Result<i32> {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+
+        if session.is_none() {
+            let mut child = Command::new("/usr/bin/display-frame")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            let replies = io::BufReader::new(child.stdout.take().expect("piped display output"));
+            *session = Some(Self { child, replies });
+        }
+        let display = session.as_mut().expect("display session initialized");
+        let response = (|| {
+            writeln!(
+                display.child.stdin.as_mut().expect("piped display input"),
+                "{text}"
+            )?;
+            let mut line = String::new();
+            while display.replies.read_line(&mut line)? != 0 {
+                let message = line.trim_end_matches('\n');
+                if let Some(status) = message.strip_prefix("RESULT ") {
+                    return status.parse().map_err(io::Error::other);
+                }
+                println!("{message}");
+                io::stdout().flush()?;
+                line.clear();
+            }
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "display session ended",
+            ))
+        })();
+        if response.is_err() {
+            let _ = display.child.kill();
+            *session = None;
+        }
+        response
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for DisplaySession {
+    fn drop(&mut self) {
+        self.child.stdin.take();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn document_console(
     work: &Path,
     guest_init: bool,
@@ -517,6 +574,7 @@ fn document_console(
         }
         println!("AIOS_STREAM_POLICY open-denied");
     }
+    let mut display = None;
     println!("AIOS_DOCUMENT_READY pid={}", std::process::id());
     for request in io::stdin().lock().lines() {
         let line = request?;
@@ -525,6 +583,7 @@ fn document_console(
                 println!("AIOS_REJECT invalid-request");
                 continue;
             }
+            drop(display.take());
             unsafe {
                 libc::sync();
                 libc::reboot(libc::RB_POWER_OFF);
@@ -559,9 +618,8 @@ fn document_console(
             continue;
         }
         if line == "display-frame" && guest_init {
-            let status = std::process::Command::new("/usr/bin/display-frame").status();
-            match status {
-                Ok(code) if code.success() => println!("AIOS_FRAME_DONE"),
+            match DisplaySession::request(&mut display, "") {
+                Ok(0) => println!("AIOS_FRAME_DONE"),
                 _ => println!("AIOS_REJECT display-frame-unavailable"),
             }
             continue;
@@ -648,12 +706,9 @@ fn document_console(
                 println!("AIOS_REJECT invalid-edit");
                 continue;
             }
-            match std::process::Command::new("/usr/bin/display-frame")
-                .arg(text)
-                .status()
-            {
-                Ok(status) if status.success() => {}
-                Ok(status) if status.code() == Some(42) => {
+            match DisplaySession::request(&mut display, text) {
+                Ok(0) => {}
+                Ok(42) => {
                     println!("AIOS_REJECT confirmation-canceled");
                     continue;
                 }

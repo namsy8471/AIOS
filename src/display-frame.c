@@ -32,15 +32,16 @@ static int axis_pixel(int value, const struct input_absinfo *axis, int size) {
            ((int64_t)axis->maximum - axis->minimum);
 }
 
-static int handle_input(int input, int drm, uint32_t framebuffer, void *pixels,
+static int handle_input(int console, int input, int drm, uint32_t framebuffer, void *pixels,
                         const struct drm_mode_create_dumb *buffer,
                         struct touch_input *touch, int confirm) {
-    struct pollfd sources[] = {{STDIN_FILENO, POLLIN, 0}, {input, POLLIN, 0}};
+    struct pollfd sources[] = {{console, POLLIN, 0}, {input, POLLIN, 0}};
     int button_event = 0;
     int pressed_button = -1;
     while (poll(sources, 2, -1) > 0) {
         if (sources[0].revents) {
-            (void)getchar();
+            char byte;
+            (void)read(console, &byte, 1);
             return confirm ? 42 : 0;
         }
         struct input_event event;
@@ -106,10 +107,7 @@ static int handle_input(int input, int drm, uint32_t framebuffer, void *pixels,
     return 1;
 }
 
-int main(int argc, char **argv) {
-    if (argc > 2)
-        return 1;
-    int confirm = argc == 2;
+int main(void) {
     int result = 1;
     int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
@@ -122,8 +120,7 @@ int main(int argc, char **argv) {
     struct drm_mode_create_dumb buffer = {0};
     void *pixels = MAP_FAILED;
     uint32_t framebuffer = 0;
-    int input = -1;
-    struct touch_input touch;
+    int console = -1;
     if (!resources || resources->count_crtcs < 1)
         goto cleanup;
     for (int index = 0; index < resources->count_connectors; ++index) {
@@ -151,25 +148,44 @@ int main(int argc, char **argv) {
     pixels = mmap(NULL, buffer.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
     if (pixels == MAP_FAILED)
         goto cleanup;
-    if (confirm) {
-        if (draw_confirmation(pixels, &buffer, argv[1]))
-            goto cleanup;
-    } else {
-        draw_frame(pixels, &buffer, -1);
-    }
-    input = open_input(&touch);
-    if (input < 0)
+    console = open("/dev/console", O_RDONLY | O_CLOEXEC);
+    if (console < 0)
         goto cleanup;
     if (drmModeAddFB(fd, buffer.width, buffer.height, 24, 32, buffer.pitch, buffer.handle, &framebuffer))
         goto cleanup;
-    if (drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode))
-        goto cleanup;
-    printf("%s %ux%u\n", confirm ? "AIOS_CONFIRM_READY" : "AIOS_FRAME_READY", buffer.width, buffer.height);
-    fflush(stdout);
-    result = handle_input(input, fd, framebuffer, pixels, &buffer, &touch, confirm);
-    if (previous && previous->mode_valid)
-        drmModeSetCrtc(fd, crtc, previous->buffer_id, previous->x, previous->y,
-                       &connector->connector_id, 1, &previous->mode);
+    fprintf(stderr, "AIOS display allocated %ux%u buffer\n", buffer.width, buffer.height);
+    char request[514];
+    while (fgets(request, sizeof(request), stdin)) {
+        char *newline = strchr(request, '\n');
+        if (!newline)
+            break;
+        *newline = '\0';
+        int confirm = request[0] != '\0';
+        struct touch_input touch;
+        int input = -1;
+        int outcome = 1;
+        if (!confirm)
+            draw_frame(pixels, &buffer, -1);
+        if (!confirm || !draw_confirmation(pixels, &buffer, request))
+            input = open_input(&touch);
+        if (input >= 0 &&
+            !drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode)) {
+            printf("%s %ux%u\n", confirm ? "AIOS_CONFIRM_READY" : "AIOS_FRAME_READY",
+                   buffer.width, buffer.height);
+            fflush(stdout);
+            outcome = handle_input(console, input, fd, framebuffer, pixels, &buffer, &touch, confirm);
+            if (previous && previous->mode_valid)
+                drmModeSetCrtc(fd, crtc, previous->buffer_id, previous->x, previous->y,
+                               &connector->connector_id, 1, &previous->mode);
+            else
+                drmModeSetCrtc(fd, crtc, 0, 0, 0, NULL, 0, NULL);
+        }
+        if (input >= 0)
+            close(input);
+        printf("RESULT %d\n", outcome);
+        fflush(stdout);
+    }
+    result = 0;
 
 cleanup:
     if (result && result != 42)
@@ -185,8 +201,8 @@ cleanup:
     drmModeFreeCrtc(previous);
     drmModeFreeConnector(connector);
     drmModeFreeResources(resources);
-    if (input >= 0)
-        close(input);
+    if (console >= 0)
+        close(console);
     close(fd);
     return result;
 }

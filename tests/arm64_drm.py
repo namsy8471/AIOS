@@ -170,6 +170,8 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
                 report["confirmed_note"] = {"text": expected, "revision": revision}
                 report["input_protocol"] = "multitouch-type-b" if multitouch else "absolute-pointer"
         report["scanout_verified"] = frame.removeprefix("AIOS_FRAME_READY ")
+        report["display_buffer_allocations"] = Path(log.name).read_bytes().count(b"AIOS display allocated ")
+        assert report["display_buffer_allocations"] == 1, report
         vm.stdin.write(b"poweroff\n")
         vm.stdin.flush()
         assert vm.wait(timeout=20) == 0
