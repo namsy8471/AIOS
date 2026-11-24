@@ -1,25 +1,32 @@
-"""Let a local model select MCP document tools using only its own observations."""
+"""Let a local model choose operations on the open AIOS document."""
 import json
 import sys
 from urllib.request import Request, urlopen
 
 
-def run_model(port, instruction, catalog, tool):
-    allowed = {item["name"]: item for item in catalog
-               if item["name"] in {"inspect_document", "read_text", "append_line", "replace_text"}}
-    definitions = [{"name": t["name"], "description": t["description"], "arguments": t["inputSchema"]}
-                   for t in allowed.values()]
-    system = ("You operate one AIOS document. Reply only with one JSON object containing tool "
-              "and arguments. Use only available tools. Use returned document and revision values "
-              "exactly. This is a non-interactive test: omit review, use the default direct edit. If you do not know the current revision, discover it. Do not invent "
-              "arguments. Keep Korean text exactly as requested. Tool definitions: "
-              + json.dumps(definitions, ensure_ascii=False))
+def run_model(port, instruction, catalog, tool, state):
+    fields = {"read_text": (), "append_line": ("line",), "replace_text": ("old", "new")}
+    choices = []
+    for item in catalog:
+        name = item["name"]
+        if name not in fields:
+            continue
+        properties = {"tool": {"type": "string", "enum": [name]}}
+        for key in fields[name]:
+            properties[key] = item["inputSchema"]["properties"][key]
+        choices.append(dict(type="object", properties=properties,
+                            required=list(properties), additionalProperties=False))
+
+    system = ("Choose the next operation on the open document. read_text reads its contents. "
+              "append_line inserts a new line and adds the supplied line; line contains just "
+              "the requested literal text without quotes or newline characters. replace_text "
+              "replaces one exact occurrence of old with new. Preserve the user's language.")
     messages = [dict(role="system", content=system), dict(role="user", content=instruction)]
-    revisions = {}
     trace = []
     for _ in range(6):
         payload = dict(messages=messages, temperature=0, max_tokens=256,
-                       response_format={"type": "json_object"})
+                       response_format={"type": "json_schema", "json_schema": {
+                           "name": "document_action", "schema": {"oneOf": choices}}})
         request = Request(f"http://127.0.0.1:{port}/v1/chat/completions",
                           data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         with urlopen(request, timeout=120) as response:
@@ -31,31 +38,17 @@ def run_model(port, instruction, catalog, tool):
         trace.append(step)
         try:
             choice = json.loads(raw)
-            name = choice["tool"]
-            args = choice["arguments"].copy()
-            if name not in allowed or not isinstance(args, dict):
-                raise ValueError("Unknown tool or invalid arguments")
-            # Short references keep the model from having to transcribe 64 hex digits.
-            if args.get("review"):
-                raise ValueError("Interactive review is unavailable in this test; omit review")
-            if "revision" in args:
-                args["revision"] = revisions[args["revision"]]
-            if name in {"append_line", "replace_text"} and not revisions:
-                raise ValueError("No document revision has been observed")
+            name = choice.pop("tool")
+            if name not in fields or set(choice) != set(fields[name]):
+                raise ValueError("Unknown operation or invalid arguments")
+            args = dict(document=state["document"], revision=state["revision"], **choice)
             step["mcp_call"] = {"name": name, "arguments": args}
             result = tool(name, **args)
             step["mcp_result"] = result
-            view = result.copy()
-            revision = view["revision"]
-            handle = next((h for h, r in revisions.items() if r == revision), None)
-            if handle is None:
-                handle = f"r{len(revisions) + 1}"
-                revisions[handle] = revision
-            view["revision"] = handle
-            if name in {"append_line", "replace_text"}:
+            if name != "read_text":
                 return result, trace
-            feedback = json.dumps(view, ensure_ascii=False)
-        except (ValueError, KeyError, AttributeError, TypeError, RuntimeError) as error:
+            feedback = json.dumps(result, ensure_ascii=False)
+        except (ValueError, KeyError, TypeError, RuntimeError) as error:
             feedback = f"Tool error: {error}"
             step["error"] = feedback
         messages.append(dict(role="user", content="AIOS tool result: " + feedback))

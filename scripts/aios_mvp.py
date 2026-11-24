@@ -132,7 +132,7 @@ def main():
             from model_mvp import run_model
             addition = "검토 완료 " + str(1000 + secrets.randbelow(9000))
             instruction = f"현재 문서의 기존 내용을 유지하고 새 줄에 '{addition}'라고 한 번만 추가해 줘."
-            saved, trace = run_model(args.model_port, instruction, catalog(), tool)
+            saved, trace = run_model(args.model_port, instruction, catalog(), tool, before)
         else:
             saved = tool("append_line", document=before["document"], revision=before["revision"], line=addition)
         expected = original + ("" if not original or original.endswith("\n") else "\n") + addition
