@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import socket
 import sqlite3
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -204,5 +205,27 @@ with tempfile.TemporaryDirectory() as temp:
     assert any(r[3:5] == ("append_line", "outcome_unknown") for r in rows)
     assert all(value.encode() not in archive.read_bytes() for value in ("승인 후 전원 차단", "미승인 변경", "검토 완료"))
     db.close()
+    # Exercise startup verification against a damaged copy of the offline log.
+    from importlib.util import module_from_spec, spec_from_file_location
+    spec = spec_from_file_location("aios_activity", Path(__file__).resolve().parents[1] / "runtime/activity.py")
+    activity = module_from_spec(spec)
+    spec.loader.exec_module(activity)
+    damaged = base / "damaged.sqlite"
+    shutil.copyfile(archive, damaged)
+    with sqlite3.connect(damaged) as modified:
+        try:
+            modified.execute("UPDATE events SET tool='modified' WHERE seq=1")
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("Ordinary SQL update modified the activity log")
+        modified.execute("DROP TRIGGER prevent_update")
+        modified.execute("UPDATE events SET tool='modified' WHERE seq=1")
+    try:
+        activity.Activity(damaged, "test-document")
+    except ValueError as error:
+        assert "hash chain" in str(error)
+    else:
+        raise AssertionError("Changed record passed startup verification")
     print("Verified persistent broker activity across three boots:", len(requests), "requests")
     print("Verified GTK and Qt commits, pending edit isolation, cancellation, stale rejection and offline CRLF bytes")

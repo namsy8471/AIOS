@@ -69,7 +69,7 @@ class Activity:
         request = uuid.uuid4().hex
         self.record(request, tool, "started")
         try:
-            yield lambda result: self.record(request, tool, "succeeded", result.revision)
+            yield request
         except StagedDiscarded:
             self.record(request, tool, "discarded")
             raise
@@ -100,16 +100,16 @@ def tracked(activity):
         if inspect.iscoroutinefunction(fn):
             @wraps(fn)
             async def invoke(*args, **kwargs):
-                with activity.attempt(fn.__name__) as succeeded:
+                with activity.attempt(fn.__name__) as request:
                     result = await fn(*args, **kwargs)
-                    succeeded(result)
-                    return result
+                activity.record(request, fn.__name__, "succeeded", result.revision)
+                return result
         else:
             @wraps(fn)
             def invoke(*args, **kwargs):
-                with activity.attempt(fn.__name__) as succeeded:
+                with activity.attempt(fn.__name__) as request:
                     result = fn(*args, **kwargs)
-                    succeeded(result)
-                    return result
+                activity.record(request, fn.__name__, "succeeded", result.revision)
+                return result
         return invoke
     return decorate

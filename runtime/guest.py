@@ -42,6 +42,11 @@ def activity_database(root):
     directory = root / ".aios-activity"
     try:
         directory.mkdir(mode=0o700)
+        parent = os.open(root, os.O_DIRECTORY | os.O_RDONLY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
     except FileExistsError:
         if directory.is_symlink() or not directory.is_dir():
             raise RuntimeError("Invalid activity directory")
