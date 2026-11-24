@@ -28,6 +28,12 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/runtime-client"
           "$RUNNER_TEMP/runtime-client/bin/pip" install -q -r runtime/requirements.txt
           "$RUNNER_TEMP/runtime-client/bin/python" tests/runtime_iso.py
+      - name: Prove the downloadable MVP through its public entry point
+        run: |
+          bash scripts/package-mvp.sh
+          python3 build/runtime/aios_mvp.py --output "$RUNNER_TEMP/mvp-proof"
+          cp "$RUNNER_TEMP/mvp-proof/proof.json" build/runtime/
+          cat build/runtime/proof.json
       - uses: actions/upload-artifact@v4
         if: success()
         with:
