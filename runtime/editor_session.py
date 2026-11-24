@@ -36,3 +36,17 @@ class EditorSession:
         self.previous = None
         if self.send(command) != "ok":
             raise ValueError("Editor action blocked")
+
+    def act_batch(self, view, actions):
+        """Run steps while the observed targets retain their original window geometry."""
+        if view["state"] != "ready" or any("bbox" not in node for node in view["elements"]):
+            raise ValueError("Batch needs a ready editor with observable target geometry")
+        bounds = {node["element_id"]: node["bbox"] for node in view["elements"]}
+        for element_id, action, text in actions:
+            self.act(view, element_id, action, text)
+            view = self.observe()
+            if view["state"] != "ready" or {
+                node["element_id"]: node.get("bbox") for node in view["elements"]
+            } != bounds:
+                raise ValueError("Editor layout changed during batch")
+        return view

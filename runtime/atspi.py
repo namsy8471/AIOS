@@ -113,6 +113,9 @@ def command(editor, line, title):
                 {"element_id": "save", "name": button.get_name(), "role": "button",
                  "actions": ["invoke"]},
             ]
+            for element, node in zip(elements, (body, button)):
+                rect = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
+                element["bbox"] = [rect.x, rect.y, rect.width, rect.height]
         return json.dumps({"state": state, "elements": elements})
     if state != "ready":
         return "blocked-" + state

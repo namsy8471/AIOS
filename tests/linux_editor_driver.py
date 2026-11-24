@@ -1,4 +1,6 @@
 import signal
+import json
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +26,18 @@ def main():
                 editor.send_signal(signal.SIGUSR1)
                 wait(editor, "dialog", title)
                 print("injected", flush=True)
+            elif line.rstrip("\n") == "move-save":
+                def position():
+                    elements = json.loads(command(editor, "observe", title))["elements"]
+                    return next(node["bbox"][0] for node in elements if node["element_id"] == "save")
+                origin = position()
+                editor.send_signal(signal.SIGUSR2)
+                deadline = time.monotonic() + 3
+                while position() != origin + 200:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Save button did not move 200 pixels")
+                    time.sleep(0.01)
+                print("moved", flush=True)
             else:
                 print(command(editor, line.rstrip("\n"), title), flush=True)
     finally:

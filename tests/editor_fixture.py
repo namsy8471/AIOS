@@ -18,6 +18,7 @@ def gtk_editor(path):
     from gi.repository import Gtk, GLib
 
     window = Gtk.Window(title="AIOS test editor")
+    window.set_default_size(640, 400)
     body = Gtk.TextView()
     body.get_accessible().set_name("Document")
     buffer = body.get_buffer()
@@ -55,6 +56,7 @@ def gtk_editor(path):
         return False
 
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, open_dialog)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, lambda: save.set_margin_start(200))
     window.show_all()
     Gtk.main()
 
@@ -67,6 +69,7 @@ def qt_editor(path):
     app = QApplication(["aios-qt-editor"])
     app.setApplicationName("AIOS Qt editor")
     window = QWidget()
+    window.resize(640, 400)
     window.setWindowTitle("AIOS test editor")
     window.setAccessibleName("AIOS test editor")
     body = QPlainTextEdit(path.read_text(encoding="utf-8"))
@@ -82,6 +85,8 @@ def qt_editor(path):
     dialog.setWindowTitle("Save document")
     dialog.setModal(True)
     signal.signal(signal.SIGUSR1, lambda *_: dialog.show())
+    signal.signal(signal.SIGUSR2, lambda *_: layout.setContentsMargins(layout.contentsMargins().left() + 200,
+                  layout.contentsMargins().top(), layout.contentsMargins().right(), layout.contentsMargins().bottom()))
     timer = QTimer()
     timer.timeout.connect(lambda: None)
     timer.start(50)
