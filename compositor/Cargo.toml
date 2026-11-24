@@ -1,0 +1,9 @@
+[package]
+name = "aios-compositor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "wayland_frontend"] }
+winit = { version = "0.30", default-features = false }
