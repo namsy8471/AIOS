@@ -28,7 +28,7 @@ jobs:
             export XDG_RUNTIME_DIR="$(mktemp -d)"
             dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked "$case" -- --ignored --nocapture
           done
-      - name: Cancel a saved edit and reopen it in a fresh GTK process
+      - name: Verify sandboxed edits, cancellation and AT-SPI observation latency
         run: |
           cargo build --locked
           python3 -m venv "$RUNNER_TEMP/mcp-env"
