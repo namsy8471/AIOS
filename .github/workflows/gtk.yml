@@ -19,7 +19,7 @@ jobs:
           options=(-o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=-
                    -o Acquire::Retries=1 -o Acquire::https::Timeout=20)
           sudo apt-get "${options[@]}" update -qq
-          sudo apt-get "${options[@]}" install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt6 xvfb xauth dbus-x11 btrfs-progs weston bubblewrap
+          sudo apt-get "${options[@]}" install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt6 qt6-wayland xvfb xauth dbus-x11 btrfs-progs weston bubblewrap
       - name: Observe dialogs and drive real editor saves
         timeout-minutes: 2
         run: |
@@ -41,6 +41,19 @@ jobs:
           trap 'sudo umount "$mountpoint"' EXIT
           sudo /usr/bin/python3 tests/gtk_recovery.py target/debug/aios "$mountpoint"
           sudo "$RUNNER_TEMP/mcp-env/bin/python" tests/mcp_document.py "$mountpoint/aios" "$mountpoint"
+          sudo btrfs subvolume create "$mountpoint/observations"
+          sudo cp runtime/atspi.py tests/{editor_fixture,text_latency}.py "$mountpoint/observations/"
+          for toolkit in gtk qt; do
+            sudo "$mountpoint/aios" agent-gui-run "$mountpoint/observations" -- /usr/bin/python3 -I /work/text_latency.py "$toolkit"
+            cp "$mountpoint/observations/$toolkit-latency.json" "$RUNNER_TEMP/"
+            jq 'del(.samples)' "$RUNNER_TEMP/$toolkit-latency.json"
+          done
+      - name: Publish Linux accessibility latency samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-text-observation-latency
+          path: ${{ runner.temp }}/*-latency.json
+          if-no-files-found: error
   windows:
     runs-on: windows-2022
     timeout-minutes: 5

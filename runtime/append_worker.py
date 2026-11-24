@@ -21,8 +21,10 @@ try:
         replacement = replacement.replace("\r\n", "\n").replace("\r", "\n")
     if Atspi.Text.get_text(node, 0, -1) != visible:
         raise ValueError("Editor content differs from observed document")
-    if not Atspi.EditableText.set_text_contents(node, replacement):
-        raise RuntimeError("Editor declined text update")
+    with observe_text(node, replacement) as await_change:
+        if not Atspi.EditableText.set_text_contents(node, replacement):
+            raise RuntimeError("Editor declined text update")
+        await_change()
     if command(editor, "save", title) != "ok":
         raise RuntimeError("Save blocked by changed UI state")
     deadline = time.monotonic() + 5

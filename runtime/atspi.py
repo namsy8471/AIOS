@@ -1,4 +1,5 @@
 """Resolve controls inside a single editor process through AT-SPI."""
+from contextlib import contextmanager
 import os
 import subprocess
 import sys
@@ -61,6 +62,41 @@ def control(window, name, interface):
     if len(matches) != 1:
         raise ValueError(f"expected one {name} with {interface}, found {len(matches)}")
     return matches[0]
+
+
+@contextmanager
+def observe_text(node, expected):
+    """Wait for this control's text event and verify its new accessible value."""
+    loop = GLib.MainLoop()
+    observed = None
+
+    def changed(event, *_):
+        nonlocal observed
+        if observed is None and event.source == node and Atspi.Text.get_text(node, 0, -1) == expected:
+            observed = time.monotonic_ns()
+            loop.quit()
+
+    def await_change():
+        if observed is None:
+            timeout = GLib.timeout_source_new(5000)
+            timeout.set_callback(lambda *_: loop.quit() or False)
+            timeout.attach(loop.get_context())
+            try:
+                loop.run()
+            finally:
+                timeout.destroy()
+        if observed is None:
+            raise TimeoutError("Expected accessible text change was not observed")
+        return observed
+
+    listener = Atspi.EventListener.new(changed, None)
+    event_type = "object:text-changed"
+    if not listener.register(event_type):
+        raise RuntimeError("Could not register text observer")
+    try:
+        yield await_change
+    finally:
+        listener.deregister(event_type)
 
 
 def command(editor, line, title):

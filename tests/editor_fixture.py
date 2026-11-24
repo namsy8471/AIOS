@@ -1,8 +1,15 @@
 """Small GTK and Qt editors that save only from their own button handlers."""
+import json
 import os
 import signal
 import sys
+import time
 from pathlib import Path
+
+
+def report_change(read_text):
+    changed = time.monotonic_ns()
+    print(json.dumps([read_text(), changed]), flush=True)
 
 
 def gtk_editor(path):
@@ -15,6 +22,9 @@ def gtk_editor(path):
     body.get_accessible().set_name("Document")
     buffer = body.get_buffer()
     buffer.set_text(path.read_text(encoding="utf-8"))
+    if "--clock" in sys.argv[3:]:
+        buffer.connect("changed", lambda *_: report_change(
+            lambda: buffer.get_text(*buffer.get_bounds(), True)))
     save = Gtk.Button(label="Save")
 
     def persist(_):
@@ -61,6 +71,8 @@ def qt_editor(path):
     window.setAccessibleName("AIOS test editor")
     body = QPlainTextEdit(path.read_text(encoding="utf-8"))
     body.setAccessibleName("Document")
+    if "--clock" in sys.argv[3:]:
+        body.textChanged.connect(lambda: report_change(body.toPlainText))
     save = QPushButton("Save")
     save.clicked.connect(lambda: path.write_bytes(body.toPlainText().encode("utf-8")))
     layout = QVBoxLayout(window)
