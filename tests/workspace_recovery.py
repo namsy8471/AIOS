@@ -12,16 +12,25 @@ import time
 
 def tree_hash(root):
     digest = hashlib.sha256()
-    for path in sorted(root.iterdir()):
-        digest.update(path.name.encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
+    for path in sorted(root.rglob("*")):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        if path.is_dir():
+            digest.update(b"D")
+        else:
+            digest.update(b"F" + hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+def entry(index):
+    return Path(f"group-{index % 10}") / f"{index:05}.txt"
 
 
 def failed_editor():
     for i in range(1000):
-        path = Path(f"{i:05}.txt")
+        path = entry(i)
         if i % 3 == 0:
-            path.rename(path.with_suffix(".new"))
+            with path.with_suffix(".new").open("xb") as created:
+                created.write(f"신규 {i}".encode())
         elif i % 3 == 1:
             path.unlink()
         else:
@@ -39,8 +48,10 @@ def failed_editor():
 def verify(binary, mount):
     root = mount / "work"
     subprocess.run(["btrfs", "subvolume", "create", root], check=True)
+    for i in range(10):
+        (root / entry(i).parent).mkdir()
     for i in range(10_000):
-        (root / f"{i:05}.txt").write_text(f"원본 {i}", encoding="utf-8")
+        (root / entry(i)).write_text(f"원본 {i}", encoding="utf-8")
     subprocess.run(["btrfs", "filesystem", "sync", mount], check=True)
     before = tree_hash(root)
     marker = mount / "autosave"
@@ -61,12 +72,14 @@ def verify(binary, mount):
         assert match and int(match[1]) < limit, failure.stderr
     time.sleep(0.6)
     assert not marker.exists()
-    assert tree_hash(root) == before
+    after = tree_hash(root)
+    assert after == before
+    print(f"tree_sha256_before={before} tree_sha256_after={after}", flush=True)
     ready = mount / "writer-ready"
     pending = subprocess.Popen([*command, "-c",
         "import sys,time; from pathlib import Path; "
-        "Path('00000.txt').write_text('pending'); Path(sys.argv[1]).touch(); "
-        "time.sleep(30)", ready])
+        "Path(sys.argv[2]).write_text('pending'); Path(sys.argv[1]).touch(); "
+        "time.sleep(30)", ready, entry(0)])
     try:
         until = time.monotonic() + 5
         while not ready.exists() and time.monotonic() < until and pending.poll() is None:
@@ -84,10 +97,10 @@ def verify(binary, mount):
     assert tree_hash(root) == before
     # A new process opens the restored tree and commits a subsequent valid edit.
     subprocess.run([*command, "-c",
-                    "from pathlib import Path; p=Path('00000.txt'); "
+                    "import sys; from pathlib import Path; p=Path(sys.argv[1]); "
                     "assert p.read_text(encoding='utf-8')=='원본 0'; "
-                    "p.write_bytes('검토 완료'.encode())"], check=True)
-    assert (root / "00000.txt").read_bytes() == "검토 완료".encode()
+                    "p.write_bytes('검토 완료'.encode())", entry(0)], check=True)
+    assert (root / entry(0)).read_bytes() == "검토 완료".encode()
     assert not list(mount.glob(".aios-session-*"))
     print("10,000-file hash restored; autosave stopped; next session committed")
 
