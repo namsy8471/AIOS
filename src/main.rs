@@ -4,6 +4,8 @@ mod agent;
 #[cfg(target_os = "linux")]
 mod document;
 #[cfg(target_os = "linux")]
+mod stream_worker;
+#[cfg(target_os = "linux")]
 mod workspace;
 
 struct Editor {
@@ -94,6 +96,15 @@ fn main() -> io::Result<std::process::ExitCode> {
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
+        if command == "append-stream-worker" || command == "probe-stream-worker" {
+            let addition = args
+                .next()
+                .and_then(|s| s.into_string().ok())
+                .ok_or_else(|| io::Error::other("expected append text"))?;
+            stream_worker::worker(&addition, command == "probe-stream-worker")?;
+            return Ok(std::process::ExitCode::SUCCESS);
+        }
+        #[cfg(target_os = "linux")]
         if command == "kernel-capabilities" {
             println!("{}", kernel_capabilities());
             return Ok(std::process::ExitCode::SUCCESS);
@@ -174,6 +185,16 @@ fn document_console() -> io::Result<std::process::ExitCode> {
     use std::io::BufRead;
     let path = Path::new("/work/note.txt");
     let staged = Path::new("/work/.aios-note-staging");
+    let stream = Path::new("/etc/aios-stream-worker").is_file();
+    if stream {
+        use std::os::unix::process::ExitStatusExt;
+        let status =
+            stream_worker::run(fs::File::options().write(true).open("/dev/null")?, "", true)?;
+        if status.signal() != Some(libc::SIGKILL) {
+            return Err(io::Error::other("strict seccomp open probe failed"));
+        }
+        println!("AIOS_STREAM_POLICY open-denied");
+    }
     println!("AIOS_DOCUMENT_READY pid=1");
     for request in io::stdin().lock().lines() {
         let line = request?;
@@ -233,20 +254,41 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         hash.update(addition.as_bytes());
         let expected = format!("{:x}", hash.finalize());
         // This console owns the workspace and reserves the staging filename.
-        fs::write(staged, &original)?;
-        let status = std::process::Command::new("/init")
-            .args([
-                "restrict-worker",
-                "--aios-edit",
-                ".aios-note-staging",
-                &observed,
-                &original.len().to_string(),
-                "0",
-                &addition,
-                &expected,
-            ])
-            .status()?;
-        if !status.success() {
+        let status = if stream {
+            use std::io::Write;
+            if original.len() + addition.len() > 4 * 1024 * 1024 {
+                println!("AIOS_REJECT invalid-edit");
+                continue;
+            }
+            // PID 1 owns this directory. Recover its unpublished stage after an interruption.
+            match fs::remove_file(staged) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+            let mut output = fs::File::options()
+                .append(true)
+                .create_new(true)
+                .open(staged)?;
+            output.write_all(original.as_bytes())?;
+            stream_worker::run(output, &addition, false)?
+        } else {
+            fs::write(staged, &original)?;
+            std::process::Command::new("/init")
+                .args([
+                    "restrict-worker",
+                    "--aios-edit",
+                    ".aios-note-staging",
+                    &observed,
+                    &original.len().to_string(),
+                    "0",
+                    &addition,
+                    &expected,
+                ])
+                .status()?
+        };
+        if !status.success()
+            || (stream && format!("{:x}", Sha256::digest(fs::read(staged)?)) != expected)
+        {
             fs::remove_file(staged)?;
             println!("AIOS_REJECT worker-error");
             continue;

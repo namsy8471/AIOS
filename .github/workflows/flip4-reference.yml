@@ -19,9 +19,10 @@ jobs:
             apk add --no-cache bash coreutils cpio findutils gcc binutils musl-dev python3 qemu-system-aarch64
             cargo build --locked --release --target aarch64-unknown-linux-musl
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/probe
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/document document
           '
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: flip4-reference-probe-log
-          path: build/flip4/probe/console.log
+          path: build/flip4/*/console.log
