@@ -63,13 +63,13 @@ def main():
                 if ready.startswith("AIOS_CONFIRM_READY "):
                     print("QEMU 창에서 저장 또는 취소를 선택하세요.", flush=True)
                     reply = wait(vm, None, "AIOS_")
-                elif reply == "AIOS_REJECT confirmation-canceled":
-                    print("편집을 취소했습니다.", flush=True)
                 else:
                     reply = ready
                 if reply.startswith("AIOS_SAVED revision="):
                     revision = reply.split("=", 1)[1]
                     print(read_document(vm, revision)["text"], flush=True)
+                elif reply == "AIOS_REJECT confirmation-canceled":
+                    print("편집을 취소했습니다.", flush=True)
                 else:
                     print(reply, file=sys.stderr)
             vm.stdin.write(b"poweroff\n")
