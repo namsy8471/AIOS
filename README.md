@@ -82,6 +82,8 @@ python3 arm64_model.py work.raw --show
 
 ### 플립4 부팅 이미지 검사
 
+Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플립4를 연결한 뒤 `scripts/flip4-inventory.ps1`을 실행합니다. 스크립트는 USB 기기 한 대를 선택해 모델과 빌드 번호, 보안 패치 버전, Android가 보고한 부트로더 잠금·Verified Boot 상태를 읽습니다. 펌웨어가 노출한 기기 트리 값도 함께 기록합니다. [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
+
 `python scripts/inspect-flip4-boot-image.py recovery.img`는 압축을 푼 Android 헤더 v2 파일에서 각 구성 요소의 위치·크기·SHA-256과 AVB 푸터 위치를 읽습니다. 커뮤니티 TWRP V2 이미지에서 확인한 페이지 크기는 4096바이트이며, 커널·DTB·복구 DTBO의 해시는 프로젝트에서 별도로 조사한 참조 파일들과 일치합니다. 푸터 검사는 파일 범위를 확인하며, 서명 검증과 실기기 호환성 판단에는 별도 증거가 필요합니다. [검사한 커뮤니티 복구 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
 
 ### 플립4 커널로 가상 메모장 실행
