@@ -1,6 +1,5 @@
-"""Exercise only the target editor's accessibility interfaces."""
+"""Resolve controls inside a single editor process through AT-SPI."""
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -44,7 +43,7 @@ def snapshot(pid, title):
     return "missing", None
 
 
-def wait(editor, expected, title="AIOS test editor"):
+def wait(editor, expected, title):
     deadline = time.monotonic() + 15
     while editor.poll() is None and time.monotonic() < deadline:
         state, window = snapshot(editor.pid, title)
@@ -64,11 +63,7 @@ def control(window, name, interface):
     return matches[0]
 
 
-def command(editor, line, title="AIOS test editor"):
-    if line == "inject-modal":
-        editor.send_signal(signal.SIGUSR1)
-        wait(editor, "dialog")
-        return "injected"
+def command(editor, line, title):
     state, window = snapshot(editor.pid, title)
     if state != "ready":
         return "blocked-" + state

@@ -59,7 +59,7 @@ def verify(binary, mount):
     protected.write_bytes(b"original host file")
     installed = mount / "aios"
     shutil.copy2(binary, installed)
-    for script in tools.iterdir():
+    for script in tools.glob("*.py"):
         shutil.copyfile(script, work / script.name)
     (work / "note.txt").write_bytes(original)
     for decision, status, expected in [("cancel", 23, original),

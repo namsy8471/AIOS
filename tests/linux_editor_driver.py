@@ -1,3 +1,4 @@
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -15,10 +16,16 @@ def main():
                               env=editor_environment(),
                               stdin=subprocess.DEVNULL, stdout=sys.stderr)
     try:
-        wait(editor, "ready")
+        title = "AIOS test editor"
+        wait(editor, "ready", title)
         print("ready", flush=True)
         for line in sys.stdin:
-            print(command(editor, line.rstrip("\n")), flush=True)
+            if line.rstrip("\n") == "inject-modal":
+                editor.send_signal(signal.SIGUSR1)
+                wait(editor, "dialog", title)
+                print("injected", flush=True)
+            else:
+                print(command(editor, line.rstrip("\n"), title), flush=True)
     finally:
         editor.terminate()
         editor.wait()

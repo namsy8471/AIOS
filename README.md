@@ -54,6 +54,16 @@ Linux의 `aios agent-run PATH -- PROGRAM [ARG...]`은 문서 작업 사본을 `/
 
 `aios agent-gui-run PATH -- PROGRAM [ARG...]`은 같은 문서 트랜잭션 안에서 전용 Wayland 화면과 D-Bus 세션을 시작합니다. 호스트에는 Weston과 D-Bus가 필요합니다. GTK는 세션 전용 소켓에 연결하며, 화면과 접근성 서비스의 임시 파일은 세션 종료 때 폐기됩니다. 이 단계에서 Weston은 자체 컴포지터를 개발하기 위한 참조 구현으로 사용합니다.
 
+## MCP로 문서 한 줄 추가
+
+Linux 호스트에서 MCP 클라이언트의 stdio 서버로 `runtime/mcp_server.py`를 실행할 수 있습니다. 서버용 Python 환경에는 `runtime/requirements.txt`의 의존성이 필요합니다. 클라이언트 실행 인수는 다음 예시처럼 설정합니다.
+
+```text
+/opt/aios/venv/bin/python /opt/aios/runtime/mcp_server.py --aios /usr/local/bin/aios --workspace /srv/aios/documents --document note.txt
+```
+
+운영자가 시작할 때 지정한 기존 UTF-8 문서 하나에 편집 권한이 부여됩니다. `inspect_document`는 파일명과 바이트 수, SHA-256 버전을 반환합니다. 클라이언트가 그 파일명과 버전, 추가할 한 줄을 `append_line`에 보내면 격리된 GTK 편집기가 저장하고 작업 사본의 바이트를 확인합니다. 오래된 버전으로 재호출하면 중복 추가가 거절됩니다. 파일은 최대 4 MiB, 한 줄은 최대 8 KiB이며 작업 폴더는 전용 Btrfs 서브볼륨입니다.
+
 ## 남은 통합 검증
 
 1. Linux 호스트와 Windows KVM 게스트를 연결하고 같은 과제를 재현합니다.
