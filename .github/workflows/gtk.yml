@@ -12,7 +12,8 @@ jobs:
         run: cargo test --locked --no-run
       - name: Install accessibility and GUI test packages
         run: |
-          sudo apt-get -o Acquire::Retries=1 update -qq
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- -o Acquire::Retries=1 -o Acquire::http::Timeout=20 update -qq
           sudo apt-get install -y --no-install-recommends at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-pyqt6 xvfb xauth dbus-x11
       - name: Observe dialogs and drive real editor saves
         timeout-minutes: 2
