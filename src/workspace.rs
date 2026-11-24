@@ -19,6 +19,7 @@ fn run_worker(branch: &Path, args: &[OsString], interrupted: &AtomicUsize) -> io
             "--user",
             "--map-root-user",
             "--pid",
+            "--mount-proc",
             "--fork",
             "--kill-child=KILL",
             "--",
