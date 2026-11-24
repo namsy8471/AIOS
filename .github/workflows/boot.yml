@@ -15,11 +15,18 @@ jobs:
           devices=()
           if test -c /dev/kvm; then devices+=(--device /dev/kvm); fi
           docker run --rm "${devices[@]}" -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
-            apk add --no-cache bash coreutils cpio findutils gcc linux-virt musl-dev qemu-system-x86_64 sudo
+            apk add --no-cache bash coreutils cpio findutils gcc linux-virt musl-dev qemu-system-x86_64 sudo grub-bios grub-efi xorriso mtools dosfstools ovmf
             bash scripts/boot-test.sh /boot/vmlinuz-virt
             if test -c /dev/kvm; then
               bash scripts/boot-test.sh /boot/vmlinuz-virt kvm
             else
               echo "Runner has no KVM device; only the TCG boot was exercised."
             fi
+            bash scripts/boot-iso.sh /boot/vmlinuz-virt build/initramfs.gz
           '
+      - name: Publish firmware-tested boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: aios-x86_64-boot
+          path: build/firmware/
+          if-no-files-found: error
