@@ -1,5 +1,5 @@
 name: Bootable document runtime
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
@@ -34,6 +34,9 @@ jobs:
           python3 build/runtime/aios_mvp.py --output "$RUNNER_TEMP/mvp-proof"
           cp "$RUNNER_TEMP/mvp-proof/proof.json" build/runtime/
           cat build/runtime/proof.json
+      - name: Verify model-selected tools on two real boots
+        if: github.event_name == 'workflow_dispatch'
+        run: bash scripts/prove-local-model.sh
       - uses: actions/upload-artifact@v4
         if: success()
         with:

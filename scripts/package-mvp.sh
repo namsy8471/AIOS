@@ -15,5 +15,5 @@ sudo btrfs subvolume create "$stage/mount/documents"
 printf 'AIOS 첫 문서' | sudo tee "$stage/mount/documents/note.txt" >/dev/null
 sudo umount "$stage/mount"
 xz -1 -c "$stage/starter.raw" > "$bundle/starter.raw.xz"
-cp scripts/aios_mvp.py "$bundle/"
-(cd "$bundle" && sha256sum aios-runtime.iso starter.raw.xz aios_mvp.py > SHA256SUMS)
+cp scripts/{aios_mvp,model_mvp}.py "$bundle/"
+(cd "$bundle" && sha256sum aios-runtime.iso starter.raw.xz aios_mvp.py model_mvp.py > SHA256SUMS)
