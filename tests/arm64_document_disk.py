@@ -30,12 +30,20 @@ def command(vm, log, request, prefix):
     return wait(vm, log, prefix)
 
 
-def console_tool(vm, log, name, document, revision, line=None):
+def console_tool(vm, log, observations, name, document, revision, line=None, index=None):
     if name == "read_text" and document == "note.txt":
         reply = command(vm, log, f"read {revision} 0 512", "AIOS_")
         if not reply.startswith("AIOS_PAGE "):
             raise ValueError(reply)
-        return json.loads(reply.removeprefix("AIOS_PAGE "))
+        page = json.loads(reply.removeprefix("AIOS_PAGE "))
+        if page["next_byte"] is None:
+            observations[revision] = page["text"].split("\n")
+        return page
+    if name == "append_observed_line":
+        lines = observations.get(revision, [])
+        if type(index) is not int or not -len(lines) <= index < len(lines):
+            raise ValueError("Read the complete document first and select an existing line index")
+        name, line = "append_line", lines[index]
     if (name != "append_line" or document != "note.txt" or not line.isprintable()
             or len(line.encode()) > 3900):
         raise ValueError("Expected a single printable console line")
@@ -81,8 +89,9 @@ for boot, expected in enumerate((original, saved, durable), 1):
                     instruction = f"문서 마지막에 '{addition}' 한 줄을 추가해 줘."
                     catalog = [{"name": "append_line", "inputSchema": {"properties": {"line": {"type": "string"}}}}]
                     catalog.append({"name": "read_text", "inputSchema": {"properties": {}}})
+                    catalog.append({"name": "append_observed_line", "inputSchema": {"properties": {"index": {"type": "integer"}}}})
                     state = {"document": "note.txt", "revision": result.split()[1].split("=")[1]}
-                    published, trace = run_model(model_port, instruction, catalog, partial(console_tool, vm, log), state)
+                    published, trace = run_model(model_port, instruction, catalog, partial(console_tool, vm, log, {}), state)
                     result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(saved)}", result
                 command(vm, log, f"read {observed} 0 3", "AIOS_REJECT invalid-read")
@@ -93,9 +102,9 @@ for boot, expected in enumerate((original, saved, durable), 1):
                 else:
                     followup = "read_text 도구로 현재 본문을 먼저 읽어 줘. 그런 다음 마지막 줄을 그대로 한 줄 더 추가해 줘."
                     state = {"document": "note.txt", "revision": observed}
-                    published, followup_trace = run_model(model_port, followup, catalog, partial(console_tool, vm, log), state)
+                    published, followup_trace = run_model(model_port, followup, catalog, partial(console_tool, vm, log, {}), state)
                     successful = [step["mcp_call"]["name"] for step in followup_trace if "mcp_result" in step]
-                    assert successful == ["read_text", "append_line"], followup_trace
+                    assert successful in (["read_text", "append_line"], ["read_text", "append_observed_line"]), followup_trace
                     result = "AIOS_SAVED revision=" + published["revision"]
                 assert result == f"AIOS_SAVED revision={revision(durable)}", result
                 vm.kill()

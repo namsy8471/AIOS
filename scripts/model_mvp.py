@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 def run_model(port, instruction, catalog, tool, state):
     fields = {"read_text": (), "append_line": ("line",), "replace_text": ("old", "new"),
-              "edit_document": ("edits",)}
+              "edit_document": ("edits",), "append_observed_line": ("index",)}
     choices = []
     definitions = {}
     for item in catalog:
@@ -38,6 +38,15 @@ def run_model(port, instruction, catalog, tool, state):
         dict(role="user", content=instruction),
     ]
     trace = []
+    if any(item["name"] == "append_observed_line" for item in catalog):
+        messages[0]["content"] += (" To repeat a line exactly, first call read_text, then use "
+                                   "append_observed_line with its zero-based index (-1 for last).")
+        messages[-1:-1] = [
+            dict(role="user", content="현재 본문의 맨 끝 줄을 복사해서 덧붙여 줘."),
+            dict(role="assistant", content='{"tool":"read_text"}'),
+            dict(role="user", content='AIOS tool result: {"text":"월요일\\n주간 계획","next_byte":null}'),
+            dict(role="assistant", content='{"tool":"append_observed_line","index":-1}'),
+        ]
     for _ in range(6):
         payload = dict(messages=messages, temperature=0, max_tokens=256,
                        response_format={"type": "json_schema", "json_schema": {
