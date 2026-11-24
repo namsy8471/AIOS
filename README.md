@@ -110,6 +110,8 @@ python3 flip4_model.py work.raw --show
 
 **Boot and save contract** 수동 실행의 `aios-arm64-display-package`를 압축 해제합니다. Python과 SDL을 지원하는 QEMU가 실행 경로에 있으면 묶음 폴더에서 `python arm64_touch.py work.raw`를 실행합니다. 터미널에서 추가할 문구를 입력하고 QEMU 창에서 저장 또는 취소를 선택합니다. 빈 줄로 종료한 뒤 같은 작업 디스크로 다시 열면 저장된 메모가 먼저 표시됩니다. 이 그래픽 묶음은 Alpine 커널과 VirtIO 가상 그래픽을 사용합니다.
 
+`/opt/model`에 모델과 실행기가 들어 있는 신뢰할 수 있는 ext4 이미지를 가지고 있다면 `python arm64_touch.py work.raw --model-source model.raw`로 연결합니다. 모델 디스크는 읽기 전용으로 연결되며 메모는 `work.raw`에 저장됩니다.
+
 ### x86_64 부팅 데모
 
 QEMU가 Linux 커널을 부팅하면 커널이 initramfs의 `/init`을 PID 1로 실행합니다. 이 Rust 프로그램은 임시 디렉터리에 문서를 저장하고, 모달이 열리거나 관측 시점의 문서 버전이 오래되면 후속 저장을 중단합니다. 마지막으로 파일 내용을 다시 읽어 최초 저장본이 유지됐는지 확인하고 VM을 종료합니다. 편집기 상태는 메모리에서 모사합니다.
