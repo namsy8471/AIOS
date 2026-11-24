@@ -74,7 +74,7 @@ jobs:
           timeout 180s python3 flip4_model.py work.raw --instruction "메모 끝에 '빵' 한 줄을 추가해 줘." > edited.json
           timeout 60s python3 flip4_model.py work.raw --show > reopened.json
           cmp edited.json reopened.json
-          jq -e '.text == "장보기\n우유\n빵"' reopened.json
+          jq -e '.text == "장보기\n우유\n전원 중단 검증\n빵"' reopened.json
           sha256sum -c SHA256SUMS
           CHECK
       - uses: actions/upload-artifact@v4
