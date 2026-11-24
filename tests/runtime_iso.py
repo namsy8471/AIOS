@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory() as temp:
             vm.wait()
             output.join()
             print(Path("build/runtime/console.log").read_text(errors="replace")[-7500:])
-    assert "AIOS_RUNTIME_EXIT Ok(ExitStatus(unix_wait_status(0)))" in Path("build/runtime/console.log").read_text(errors="replace")
+    assert "AIOS_RUNTIME_STOPPED" in Path("build/runtime/console.log").read_text(errors="replace")
     run(["sudo", "mount", "-o", "loop,ro,nologreplay", disk, mount], check=True)
     try:
         assert note.read_bytes() == expected

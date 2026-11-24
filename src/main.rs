@@ -68,7 +68,10 @@ fn main() -> io::Result<std::process::ExitCode> {
         let status = std::process::Command::new("/usr/bin/python3")
             .arg("/opt/aios/guest.py")
             .status();
-        println!("AIOS_RUNTIME_EXIT {status:?}");
+        match status {
+            Ok(code) if code.success() => println!("AIOS_RUNTIME_STOPPED"),
+            other => eprintln!("AIOS runtime failed: {other:?}"),
+        }
         unsafe {
             libc::sync();
             libc::reboot(libc::RB_POWER_OFF);

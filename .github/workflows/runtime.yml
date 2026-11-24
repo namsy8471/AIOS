@@ -10,8 +10,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install ISO and virtual machine tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends grub-pc-bin grub-common xorriso mtools squashfs-tools btrfs-progs qemu-system-x86 seabios
+          sources="$RUNNER_TEMP/runtime-packages.list"
+          for suite in noble noble-updates noble-security; do
+            echo "deb https://archive.ubuntu.com/ubuntu $suite main universe" >> "$sources"
+          done
+          options=(-o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=-
+                   -o Acquire::Retries=1 -o Acquire::https::Timeout=20)
+          sudo apt-get "${options[@]}" update -qq
+          sudo apt-get "${options[@]}" install -y --no-install-recommends grub-pc-bin grub-common xorriso mtools squashfs-tools btrfs-progs qemu-system-x86 seabios
           if test -c /dev/kvm; then sudo chmod a+rw /dev/kvm; fi
       - name: Build live runtime ISO
         run: bash scripts/runtime-iso.sh
