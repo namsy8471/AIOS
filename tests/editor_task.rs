@@ -49,14 +49,24 @@ fn exercise(toolkit: &str, mut adapter: Command) {
 }
 
 #[cfg(target_os = "linux")]
+fn linux_editor(toolkit: &str) {
+    let mut adapter = Command::new("python3");
+    adapter.args(["tests/linux_editor_driver.py", toolkit]);
+    exercise(toolkit, adapter);
+}
+
+#[cfg(target_os = "linux")]
 #[test]
-#[ignore = "requires GTK, Qt and an AT-SPI desktop"]
-fn linux_editors() {
-    for toolkit in ["gtk", "qt"] {
-        let mut adapter = Command::new("python3");
-        adapter.args(["tests/linux_editor_driver.py", toolkit]);
-        exercise(toolkit, adapter);
-    }
+#[ignore = "requires GTK and an AT-SPI desktop"]
+fn gtk_editor() {
+    linux_editor("gtk");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires Qt and an AT-SPI desktop"]
+fn qt_editor() {
+    linux_editor("qt");
 }
 
 #[cfg(windows)]

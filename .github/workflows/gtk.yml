@@ -18,8 +18,11 @@ jobs:
       - name: Observe dialogs and drive real editor saves
         timeout-minutes: 2
         run: |
-          PATH="/usr/bin:$PATH" GTK_A11Y=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked gtk_modal_blocks_save -- --ignored --nocapture
-          PATH="/usr/bin:$PATH" QT_QPA_PLATFORM=xcb QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 NO_AT_BRIDGE=0 dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked --test editor_task -- --ignored --nocapture
+          export PATH="/usr/bin:$PATH" QT_QPA_PLATFORM=xcb QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+          for case in gtk_modal_blocks_save gtk_editor qt_editor; do
+            export XDG_RUNTIME_DIR="$(mktemp -d)"
+            dbus-run-session -- xvfb-run -a "$HOME/.cargo/bin/cargo" test --locked "$case" -- --ignored --nocapture
+          done
   windows:
     runs-on: windows-2022
     timeout-minutes: 5

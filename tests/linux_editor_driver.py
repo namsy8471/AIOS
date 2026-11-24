@@ -87,13 +87,13 @@ def command(editor, line):
 
 def main():
     fixture = Path(__file__).with_name("editor_fixture.py")
-    Atspi.get_desktop(0)
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     address = bus.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus",
                             "GetAddress", None, GLib.VariantType.new("(s)"),
                             Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
+    os.environ["AT_SPI_BUS_ADDRESS"] = address
+    Atspi.get_desktop(0)
     editor = subprocess.Popen([sys.executable, str(fixture), *sys.argv[1:]],
-                              env={**os.environ, "AT_SPI_BUS_ADDRESS": address},
                               stdin=subprocess.DEVNULL, stdout=sys.stderr)
     try:
         wait(editor, "ready")
