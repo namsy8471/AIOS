@@ -22,7 +22,14 @@ def run_model(port, instruction, catalog, tool, state):
               "append_line inserts a new line and adds the supplied line; line contains just "
               "the requested literal text without quotes or newline characters. replace_text "
               "replaces one exact occurrence of old with new. Preserve the user's language.")
-    messages = [dict(role="system", content=system), dict(role="user", content=instruction)]
+    messages = [
+        dict(role="system", content=system),
+        dict(role="user", content="맨 아래에 '회의 종료' 한 줄을 덧붙여 줘."),
+        dict(role="assistant", content='{"tool":"append_line","line":"회의 종료"}'),
+        dict(role="user", content="'오전'이라고 적힌 부분을 '오후'로 고쳐 줘."),
+        dict(role="assistant", content='{"tool":"replace_text","old":"오전","new":"오후"}'),
+        dict(role="user", content=instruction),
+    ]
     trace = []
     for _ in range(6):
         payload = dict(messages=messages, temperature=0, max_tokens=256,
