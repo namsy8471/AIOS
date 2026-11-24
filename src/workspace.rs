@@ -2,7 +2,7 @@
 use rustix::fs::{CWD, RenameFlags, renameat_with};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
@@ -37,6 +37,14 @@ fn run_worker(
         cli
     };
     let mut worker = command.process_group(0).spawn()?;
+    let diagnostic = worker.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut prefix = Vec::new();
+            pipe.by_ref().take(4096).read_to_end(&mut prefix)?;
+            io::copy(&mut pipe, &mut io::sink())?;
+            Ok::<_, io::Error>(prefix)
+        })
+    });
     loop {
         let signal = interrupted.load(Ordering::SeqCst);
         if signal != 0 {
@@ -45,6 +53,14 @@ fn run_worker(
             return Ok(128 + signal as u8);
         }
         if let Some(status) = worker.try_wait()? {
+            if let Some(reader) = diagnostic {
+                let bytes = reader
+                    .join()
+                    .map_err(|_| io::Error::other("worker log reader stopped"))??;
+                if !status.success() && !bytes.is_empty() {
+                    eprintln!("agent stderr {:?}", String::from_utf8_lossy(&bytes));
+                }
+            }
             return Ok(status.code().unwrap_or(1) as u8);
         }
         std::thread::sleep(Duration::from_millis(5));

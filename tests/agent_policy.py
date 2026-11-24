@@ -7,9 +7,10 @@ import subprocess
 import sys
 
 
-def check_worker(protected, port):
+def check_worker(protected, port, host_fd):
     assert "AIOS_HOST_ONLY" not in os.environ
     for operation, expected in [
+        (lambda: os.fstat(int(host_fd)), (errno.EBADF,)),
         (lambda: Path(protected).read_bytes(), (errno.ENOENT, errno.EACCES)),
         (lambda: Path(protected).write_bytes(b"changed"), (errno.ENOENT, errno.EACCES)),
         # /dev/null is present and normally writable; Landlock must deny the open.
@@ -24,7 +25,7 @@ def check_worker(protected, port):
     try:
         with socket.create_connection(("127.0.0.1", int(port)), timeout=1):
             raise AssertionError("reached host listener")
-    except (ConnectionRefusedError, OSError) as err:
+    except OSError as err:
         assert err.errno in (errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH)
     Path("result.tmp").write_text("검토 완료", encoding="utf-8")
     Path("result.tmp").replace("result.txt")
@@ -42,8 +43,14 @@ def verify(binary, mount):
         receiver.settimeout(0.2)
         command = [binary, "agent-run", work, "--", "/usr/bin/python3", "-I", "check.py",
                    "inside", str(protected), str(receiver.getsockname()[1])]
-        subprocess.run(command, check=True, timeout=10,
-                       env={**os.environ, "AIOS_HOST_ONLY": "synthetic"})
+        with protected.open("r+b") as host_file:
+            import fcntl
+            high_fd = fcntl.fcntl(host_file, fcntl.F_DUPFD_CLOEXEC, 200)
+            try:
+                subprocess.run([*command, str(high_fd)], check=True, timeout=10,
+                               pass_fds=(high_fd,), env={**os.environ, "AIOS_HOST_ONLY": "synthetic"})
+            finally:
+                os.close(high_fd)
         try:
             conn, _ = receiver.accept()
         except TimeoutError:

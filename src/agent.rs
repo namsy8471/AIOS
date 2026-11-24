@@ -40,7 +40,23 @@ pub fn launcher(branch: &Path, args: &[OsString]) -> io::Result<Command> {
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
+    // Landlock applies at open time. Only the three null descriptors may reach
+    // bwrap, even when the caller explicitly passed other descriptors to AIOS.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::syscall(
+                libc::SYS_close_range,
+                3_u32,
+                u32::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            ) < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     Ok(cmd)
 }
 
