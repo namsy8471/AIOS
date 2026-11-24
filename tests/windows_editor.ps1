@@ -10,6 +10,7 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     Add-Type -AssemblyName System.Windows.Forms
     $form = [Windows.Forms.Form]::new()
     $form.Text = 'AIOS test editor'
+    $form.AccessibleName = 'AIOS test editor'
     $body = [Windows.Forms.TextBox]::new()
     $body.Multiline = $true
     $body.AccessibleName = 'Document'
@@ -30,6 +31,8 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     $layout.Dock = 'Fill'
     foreach ($item in $body, $save, $inject) { $layout.Controls.Add($item) }
     $form.Controls.Add($layout)
+    $form.Show()
+    $form.Activate()
     [Windows.Forms.Application]::Run($form)
     exit
 }
@@ -91,7 +94,9 @@ function Wait-State($expected) {
         if ($observation.State -eq $expected) { return }
         Start-Sleep -Milliseconds 60
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "Timed out waiting for $expected"
+    $roots = @(Find-Elements ([Windows.Automation.AutomationElement]::RootElement) ([Windows.Automation.AutomationElement]::ProcessIdProperty) $child.Id Children)
+    $names = @($roots | ForEach-Object { $_.Current.Name }) -join ', '
+    throw "Timed out waiting for $expected, last state $($observation.State), windows [$names]"
 }
 
 function Get-Pattern($window, $name, $pattern) {
