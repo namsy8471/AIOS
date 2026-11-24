@@ -52,6 +52,51 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4/bundle/
+  board-candidate:
+    needs: probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-reference-unsigned
+          path: build/flip4/reference-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-virtual-disk
+          path: build/flip4/bundle
+      - name: Build the offline CAPE board candidate
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cpio device-tree-compiler gcc libc6-dev mkbootimg qemu-system-arm
+          bundle=build/flip4
+          recovery="$bundle/recovery.img"
+          (cd "$bundle/reference-image" && sha256sum -c SHA256SUMS)
+          (cd "$bundle/bundle" && sha256sum -c SHA256SUMS)
+          curl -fsSL --retry 3 https://github.com/rainbowdashh/android_device_samsung_b4q/releases/download/V2/twrp_b4q_V2.img -o "$recovery"
+          echo "2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  $recovery" | sha256sum -c -
+          unpack_bootimg --boot_img "$bundle/reference-image/aios-flip4-document-reference-unsigned.img" --out "$bundle/document"
+          bash scripts/flip4-reference-image.sh --board-image "$recovery" \
+            "$bundle/document/ramdisk" "$bundle/reference-board"
+      - name: Test the board module set and document persistence on QEMU virt
+        run: |
+          bundle=build/flip4/bundle
+          board=build/flip4/reference-board
+          cp --sparse=always "$bundle/split-starter.raw" "$board/work.raw"
+          timeout 180s python3 tests/flip4_split_disk.py "$bundle" "$board/work.raw" "$board/payload" \
+            --driver-order "$board/order.txt" > "$board/proof.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-reference-board-candidate
+          path: |
+            build/flip4/reference-board/document-with-drivers.img
+            build/flip4/reference-board/layout.json
+            build/flip4/reference-board/order.txt
+            build/flip4/reference-board/board.json
+            build/flip4/reference-board/merged.dtb
+            build/flip4/reference-board/proof.json
+            build/flip4/reference-board/console-*.log
   driver-modules:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 8

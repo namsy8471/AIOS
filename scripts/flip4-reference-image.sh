@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Assemble an unsigned reference image and boot its extracted payloads in QEMU.
 set -euo pipefail
-driver_only=false
-if [[ ${1:-} == --driver-image ]]; then
-  driver_only=true
+mode=${1:-}
+if [[ $mode == --driver-image || $mode == --board-image ]]; then
   reference=${2:?Pass the community recovery image}
   document_ramdisk=${3:?Pass the extracted AIOS document ramdisk}
   out=${4:?Pass a new output directory}
@@ -43,8 +42,9 @@ assemble() {
 
 assemble_driver_image() {
   local destination=$1 layout=$2
+  shift 2
   mkdir -p "$destination"
-  python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay
+  python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay "$@"
   # The kernel unpacks both members into the same initramfs tree.
   cat "$document_ramdisk" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
   assemble "$stage/document-with-drivers.cpio.gz" "$destination/document-with-drivers.img" \
@@ -52,7 +52,13 @@ assemble_driver_image() {
   cp "$stage/module-overlay/order.txt" "$destination/order.txt"
 }
 
-if "$driver_only"; then
+if [[ $mode == --board-image ]]; then
+  assemble_driver_image "$out" "$out/layout.json" --board-overlay
+  python3 scripts/flip4_board.py "$out/payload" "$out/order.txt" "$out"
+  exit
+fi
+
+if [[ $mode == --driver-image ]]; then
   assemble_driver_image "$out" "$out/layout.json"
   exit
 fi

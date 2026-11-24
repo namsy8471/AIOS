@@ -98,9 +98,23 @@ Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플
 
 `python scripts/inspect-flip4-boot-image.py recovery.img`는 압축을 푼 Android 헤더 v2 파일에서 각 구성 요소의 위치·크기·SHA-256과 AVB 푸터 위치를 읽습니다. 커뮤니티 TWRP V2 이미지에서 확인한 페이지 크기는 4096바이트이며, 커널·DTB·복구 DTBO의 해시는 프로젝트에서 별도로 조사한 참조 파일들과 일치합니다. 푸터 검사는 파일 범위를 확인하며, 서명 검증과 실기기 호환성 판단에는 별도 증거가 필요합니다. [검사한 커뮤니티 복구 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
 
+### 플립4 CAPE 보드 후보 빌드
+
+고정된 TWRP V2 복구 이미지와 AIOS 문서 램디스크를 사용해 오프라인 후보를 만들 수 있습니다. Linux ARM64에서 `cpio`, `device-tree-compiler`, `gcc`, `libc6-dev`, `mkbootimg`, Python 3가 필요합니다. 교차 빌드에서는 정적 ARM64 C 컴파일러를 `CC`로 지정합니다.
+
+```sh
+bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.cpio.gz build/flip4/reference-board
+```
+
+`flip4-reference-board-candidate`에는 Android v2 참조 이미지, 구성 요소 해시 `layout.json`, 램디스크의 모듈 로드 순서 `order.txt`, 병합한 `merged.dtb`와 조사 결과 `board.json`, QEMU의 두 부팅 로그와 문서 저장·복원 결과가 들어갑니다. 빌드에서 DTB 0번과 DTBO 테이블 9번의 SoC ID와 보드 리비전 범위를 확인하고, 원본 DTB·DTBO 테이블을 부팅 이미지에 보존합니다. 병합본은 오프라인 조사에 사용합니다. 후보에 포함된 문서 램디스크의 드라이버 로더와 디스크 선택은 현재 QEMU용 커널 인자에 의존합니다.
+
+병합본에는 안쪽 `B4_S6E3FAC_AMF670BS01`과 커버 `B4_S6E36W3_AMB190ZB01` 패널, STM 및 Zinitix 터치, CAPE PHY를 참조하는 UFS 컨트롤러가 선언돼 있습니다. 보드 후보는 QEMU에서 로드한 80개 모듈에 터치 I²C, UFS PHY, CAPE 클록과 핀 제어 및 그 모듈 의존성을 더해 88개를 패키징합니다. `board.json`은 터치 노드가 선언한 펌웨어 경로도 기록합니다. 실기에서 필요한 펌웨어 확보, 드라이버 바인딩, 화면·터치 동작과 UFS 저장은 별도 검증이 필요합니다.
+
 ### 플립4 커널로 가상 메모장 실행
 
 **Flip4 reference kernel probe**의 `flip4-reference-unsigned` 묶음에는 `aios-flip4-document-reference-unsigned.img`가 있습니다. Android v2 컨테이너에서 꺼낸 커널과 AIOS 램디스크로 QEMU를 두 번 부팅합니다. 첫 부팅에서 별도 가상 디스크에 메모를 저장하고 이전 버전으로 보낸 요청이 거절되는지 확인합니다. 두 번째 부팅에서 저장한 본문과 해시를 대조합니다. 증거는 `document-proof.json`과 두 부팅 로그에 있습니다. 이 이미지의 플립4 실기 부팅은 검증이 남아 있습니다.
+
+[드라이버와 로컬 모델을 함께 검증한 실행](https://github.com/namsy8471/AIOS/actions/runs/45425116253)의 `flip4-reference-drivers-model-proof`에는 같은 램디스크로 두 번 부팅해 모듈 80개를 매번 로드한 로그가 있습니다. 두 부팅에서 모델 파티션이 읽기 전용으로 마운트됐고, 실행기는 저장 전과 각 부팅 후 파티션의 SHA-256을 대조했습니다. 첫 부팅에서 모델이 추가한 `우유`는 두 번째 부팅에서 같은 문서 해시로 복원됐습니다. 이 검증은 QEMU 콘솔에서 실행됐습니다.
 
 게스트 내부에서 Qwen2.5-0.5B 추론을 실행하려면 같은 워크플로 실행의 `flip4-guest-model-disk`와 `flip4-virtual-disk`를 한 폴더에 풉니다. Linux에서 `sha256sum -c MODEL_SHA256SUMS`로 검사하고 `cp split-model-starter.raw work.raw`로 작업용 디스크를 만듭니다. `python3 flip4_model.py work.raw --split-disk --guest-model --instruction "메모에 '우유'를 적어줘."`를 실행하면 게스트가 읽기 전용 시스템의 모델을 사용하고 별도 문서 파티션에 결과를 저장합니다. 표준 오류의 `inference_ms`는 모델 프로세스 시작부터 결과 검증까지의 게스트 경과 시간이며, `model_peak_rss_kib`는 해당 프로세스의 최대 상주 메모리입니다. 종료 후 `python3 flip4_model.py work.raw --split-disk --show`로 저장 내용을 읽습니다.
 
