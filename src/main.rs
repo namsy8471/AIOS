@@ -1,4 +1,6 @@
 use std::{fs, io, path::Path};
+#[cfg(target_os = "linux")]
+mod workspace;
 
 struct Editor {
     revision: u64,
@@ -41,7 +43,15 @@ fn run_demo() -> io::Result<()> {
     result.and(cleanup)
 }
 
-fn main() -> io::Result<()> {
+fn main() -> io::Result<std::process::ExitCode> {
+    let mut args = std::env::args_os().skip(1);
+    if let Some(command) = args.next() {
+        #[cfg(target_os = "linux")]
+        if command == "workspace-run" {
+            return workspace::run(&args.collect::<Vec<_>>());
+        }
+        return Err(io::Error::other(format!("unknown command: {command:?}")));
+    }
     run_demo()?;
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 {
@@ -53,7 +63,7 @@ fn main() -> io::Result<()> {
         unsafe { reboot(0x4321fedc) };
         return Err(io::Error::last_os_error());
     }
-    Ok(())
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

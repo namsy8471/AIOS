@@ -1,0 +1,23 @@
+name: Workspace recovery
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --locked
+      - name: Verify the transaction on a disposable Btrfs filesystem
+        run: |
+          if ! command -v mkfs.btrfs >/dev/null; then
+            sudo apt-get install -y btrfs-progs
+          fi
+          image=$(mktemp "$RUNNER_TEMP/aios-btrfs-XXXXXX")
+          mountpoint=$(mktemp -d)
+          truncate -s 512M "$image"
+          mkfs.btrfs -q "$image"
+          sudo mount -o loop "$image" "$mountpoint"
+          trap 'sudo umount "$mountpoint"' EXIT
+          sudo python3 tests/workspace_recovery.py target/debug/aios "$mountpoint"
