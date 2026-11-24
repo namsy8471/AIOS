@@ -107,7 +107,10 @@ def main():
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--output", type=Path, help="new directory for the disk, logs and proof")
     parser.add_argument("--model-port", type=int, help="local llama-server port for model-selected MCP calls")
+    parser.add_argument("--instruction", help="ask the local model to edit the starter document")
     args = parser.parse_args()
+    if args.instruction is not None and (not args.instruction.strip() or args.model_port is None):
+        parser.error("--instruction requires a nonempty request and --model-port")
     qemu = shutil.which(args.qemu)
     if not qemu:
         parser.error("QEMU x86_64 is required; specify --qemu with its executable path")
@@ -130,24 +133,25 @@ def main():
         if args.model_port is not None:
             from model_mvp import run_model
             addition = "검토 완료 " + str(1000 + secrets.randbelow(9000))
-            instruction = f"현재 문서의 기존 내용을 유지하고 새 줄에 '{addition}'라고 한 번만 추가해 줘."
+            instruction = args.instruction or f"현재 문서의 기존 내용을 유지하고 새 줄에 '{addition}'라고 한 번만 추가해 줘."
         started = time.perf_counter_ns()
         before, original = read(tool)
         if args.model_port is not None:
             saved, trace = run_model(args.model_port, instruction, catalog(), tool, before)
         else:
             saved = tool("append_line", document=before["document"], revision=before["revision"], line=addition)
-        expected = original + ("" if not original or original.endswith("\n") else "\n") + addition
-        digest = hashlib.sha256(expected.encode()).hexdigest()
-        if saved["revision"] != digest:
-            raise RuntimeError("Save did not return the expected revision")
         state, text = read(tool)
-        if text != expected or state["revision"] != digest:
+        if args.instruction is None:
+            expected = original + ("" if not original or original.endswith("\n") else "\n") + addition
+            if text != expected:
+                raise RuntimeError("Saved document differs from the requested demo edit")
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        if saved["revision"] != digest or state["revision"] != digest:
             raise RuntimeError("Saved document failed readback")
         verified_ns = time.perf_counter_ns() - started
     with boot(qemu, iso, disk, output / "second-boot.log") as (tool, _):
         reopened, actual = read(tool)
-        if actual != expected or reopened["revision"] != digest:
+        if actual != text or reopened["revision"] != digest:
             raise RuntimeError("Rebooted guest returned different content")
     proof = dict(document=before["document"], before=original, after_reboot=actual,
                  revision_before=before["revision"], revision_after_reboot=digest, boots=2)

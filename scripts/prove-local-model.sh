@@ -31,3 +31,14 @@ if ! python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/proof
 fi
 cp "$stage/proof/proof.json" build/runtime/model-proof.json
 cat build/runtime/model-proof.json
+python3 build/runtime/aios_mvp.py --model-port 18080 --output "$stage/custom" \
+  --instruction "문서에서 '첫 문서'를 '작업 기록'으로 바꿔 줘."
+python3 - "$stage/custom/proof.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+proof = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert proof["after_reboot"] == "AIOS 작업 기록", proof
+PY
+cp "$stage/custom/proof.json" build/runtime/model-replace-proof.json
