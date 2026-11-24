@@ -101,7 +101,9 @@ def main(launch=None):
     action.add_argument("--interactive", action="store_true", help="edit repeatedly until a blank line or EOF")
     action.add_argument("--show", action="store_true", help="print the persisted document")
     parser.add_argument("--model-port", type=int, default=18080)
-    parser.add_argument("--offline", action="store_true", help="use built-in Korean memo commands in the guest")
+    engine = parser.add_mutually_exclusive_group()
+    engine.add_argument("--offline", action="store_true", help="use built-in Korean memo commands in the guest")
+    engine.add_argument("--guest-model", action="store_true", help="extract a line to append with a model installed in the guest")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
     if not args.disk.is_file() or args.disk.samefile(launcher.with_name("starter.raw")):
@@ -109,7 +111,7 @@ def main(launch=None):
     if args.instruction is not None and not args.instruction.strip():
         parser.error("empty instruction")
 
-    vm_args = launch(args.disk) if launch else ["bash", launcher, args.disk]
+    vm_args = launch(args.disk, guest_model=args.guest_model) if launch else ["bash", launcher, args.disk]
     with subprocess.Popen(vm_args, stdin=subprocess.PIPE,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:
@@ -118,10 +120,11 @@ def main(launch=None):
             for instruction in requests(args):
                 info = command(vm, log, "inspect", "AIOS_DOCUMENT ")
                 revision = info.split()[1].split("=")[1]
-                if instruction is not None and args.offline:
+                if instruction is not None and (args.offline or args.guest_model):
                     if not instruction.isprintable() or len(instruction.encode()) > 3900:
                         raise ValueError("Expected a single printable instruction under 3901 bytes")
-                    reply = command(vm, log, f"korean {revision} {instruction}", "AIOS_")
+                    operation = "model-append" if args.guest_model else "korean"
+                    reply = command(vm, log, f"{operation} {revision} {instruction}", "AIOS_")
                     if not reply.startswith(("AIOS_SAVED revision=", "AIOS_READ revision=")):
                         raise ValueError(reply)
                     revision = reply.split("=", 1)[1]

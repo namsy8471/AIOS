@@ -73,3 +73,26 @@ jobs:
             build/flip4/proof.json
             build/flip4/offline.jsonl
             build/flip4/disk-*.log
+  guest-model:
+    needs: probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-virtual-disk
+          path: build/flip4
+      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-arm e2fsprogs ninja-build
+      - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/model.raw
+      - name: Infer and save in the disconnected ARM64 guest
+        run: |
+          cd build/flip4
+          timeout 600s python3 flip4_model.py model.raw --guest-model --instruction "메모에 '우유'를 적어줘." > inferred.json
+          timeout 60s python3 flip4_model.py model.raw --show > reopened.json
+          cmp inferred.json reopened.json
+          jq -e '.text == "장보기\n우유"' reopened.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-guest-inference
+          path: build/flip4/inferred.json

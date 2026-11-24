@@ -210,6 +210,45 @@ fn korean_append(instruction: &str) -> Option<&str> {
 }
 
 #[cfg(target_os = "linux")]
+fn model_append_text(instruction: &str) -> io::Result<String> {
+    use std::os::unix::process::CommandExt;
+    if instruction.len() > 512
+        || instruction.chars().any(char::is_control)
+        || instruction.contains("<|")
+    {
+        return Err(io::Error::other("invalid instruction"));
+    }
+    let prompt = format!(
+        "<|im_start|>system\nExtract the exact text to append from the Korean memo request. Output only that text without quotes. For example: 메모에 사과를 적어줘 -> 사과<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
+    );
+    let output = std::process::Command::new("/opt/model/llama-simple")
+        .args([
+            "-m",
+            "/opt/model/model.gguf",
+            "-ngl",
+            "0",
+            "-n",
+            "24",
+            &prompt,
+        ])
+        .uid(65534)
+        .gid(65534)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "inference failed: {}",
+            output.status
+        )));
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(io::Error::other)?;
+    let text = stdout.strip_prefix(&prompt).unwrap_or("").trim();
+    if text.is_empty() || text.chars().any(char::is_control) || !instruction.contains(text) {
+        return Err(io::Error::other("model returned no verbatim memo text"));
+    }
+    Ok(text.to_owned())
+}
+
+#[cfg(target_os = "linux")]
 fn document_console() -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
     use std::io::BufRead;
@@ -261,7 +300,25 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             }
             continue;
         }
-        let edit = if let Some(request) = line.strip_prefix("korean ") {
+        let generated;
+        let edit = if let Some(request) = line.strip_prefix("model-append ") {
+            let Some((revision, instruction)) = request.split_once(' ') else {
+                println!("AIOS_REJECT invalid-request");
+                continue;
+            };
+            if revision != observed {
+                println!("AIOS_REJECT invalid-edit");
+                continue;
+            }
+            match model_append_text(instruction) {
+                Ok(text) => generated = text,
+                Err(error) => {
+                    println!("AIOS_REJECT {error}");
+                    continue;
+                }
+            }
+            Some((revision, generated.as_str()))
+        } else if let Some(request) = line.strip_prefix("korean ") {
             let Some((revision, instruction)) = request.split_once(' ') else {
                 println!("AIOS_REJECT invalid-request");
                 continue;
