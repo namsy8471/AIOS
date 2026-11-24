@@ -37,6 +37,8 @@ kernel/drivers/input/evdev.ko*
 kernel/drivers/virtio/virtio_input.ko*
 EOF
 mkinitfs -P "$stage/features" -F 'base virtio ext4 display' -o "$stage/display-initramfs" "${modules[0]##*/}"
+cc -Wall -Wextra $(pkg-config --cflags libdrm) tests/display_route.c -o "$stage/display-route-test"
+"$stage/display-route-test"
 cc -O2 -Wall -Wextra $(pkg-config --cflags libdrm freetype2) src/display-frame.c \
   -o "$stage/root/usr/bin/display-frame" $(pkg-config --libs libdrm freetype2)
 fonts="$stage/root/usr/share/aios"

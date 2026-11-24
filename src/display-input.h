@@ -12,7 +12,7 @@ struct touch_input {
     } contacts[TOUCH_SLOTS];
 };
 
-static int open_input(struct touch_input *state) {
+static int open_input(struct touch_input *state, enum panel_priority panel) {
     glob_t nodes = {0};
     if (glob("/dev/input/event*", 0, NULL, &nodes))
         return -1;
@@ -23,7 +23,6 @@ static int open_input(struct touch_input *state) {
         int fd = open(nodes.gl_pathv[i], O_RDONLY | O_CLOEXEC);
         if (fd < 0)
             continue;
-        int rank = 1;
         unsigned char axes[(ABS_MAX + 8) / 8] = {0};
         if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(axes)), axes) < 0) {
             close(fd);
@@ -56,14 +55,17 @@ static int open_input(struct touch_input *state) {
                 candidate.count += candidate.contacts[j].active;
             }
             candidate.blocked = candidate.count != 0;
-            char name[128] = {0};
-            ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
-            rank = !strcmp(name, "sec_touchscreen") ? 3 : 2;
         } else if (ioctl(fd, EVIOCGABS(ABS_X), &candidate.x) < 0 ||
                    ioctl(fd, EVIOCGABS(ABS_Y), &candidate.y) < 0) {
             close(fd);
             continue;
         }
+        char name[128] = {0};
+        if (ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) < 0) {
+            close(fd);
+            continue;
+        }
+        int rank = touch_rank(name, candidate.slots != 0, panel);
         if (rank <= chosen_rank || candidate.x.maximum <= candidate.x.minimum ||
             candidate.y.maximum <= candidate.y.minimum) {
             close(fd);

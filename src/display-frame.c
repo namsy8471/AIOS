@@ -10,6 +10,7 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include "display-confirm.h"
+#include "display-route.h"
 #include "display-input.h"
 
 static void draw_frame(void *pixels, const struct drm_mode_create_dumb *buffer, int selected) {
@@ -107,6 +108,29 @@ static int handle_input(int console, int input, int drm, uint32_t framebuffer, v
     return 1;
 }
 
+static drmModeCrtc *find_crtc(int fd, const drmModeRes *resources, const drmModeConnector *connector) {
+    drmModeEncoder *encoder = drmModeGetEncoder(fd, connector->encoder_id);
+    uint32_t active = encoder ? encoder->crtc_id : 0;
+    drmModeFreeEncoder(encoder);
+    if (active)
+        return drmModeGetCrtc(fd, active);
+
+    for (int i = 0; i < connector->count_encoders; ++i) {
+        encoder = drmModeGetEncoder(fd, connector->encoders[i]);
+        uint32_t compatible = encoder ? encoder->possible_crtcs : 0;
+        drmModeFreeEncoder(encoder);
+        for (int j = 0; j < resources->count_crtcs && j < 32; ++j) {
+            if (!(compatible & (UINT32_C(1) << j)))
+                continue;
+            drmModeCrtc *crtc = drmModeGetCrtc(fd, resources->crtcs[j]);
+            if (crtc && !crtc->mode_valid)
+                return crtc;
+            drmModeFreeCrtc(crtc);
+        }
+    }
+    return NULL;
+}
+
 int main(void) {
     int result = 1;
     int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
@@ -123,20 +147,42 @@ int main(void) {
     int console = -1;
     if (!resources || resources->count_crtcs < 1)
         goto cleanup;
+    enum panel_priority rank = 0;
+    drmModeModeInfo mode = {0};
     for (int index = 0; index < resources->count_connectors; ++index) {
-        connector = drmModeGetConnector(fd, resources->connectors[index]);
-        if (connector && connector->connection == DRM_MODE_CONNECTED && connector->count_modes)
-            break;
-        drmModeFreeConnector(connector);
-        connector = NULL;
+        drmModeConnector *candidate = drmModeGetConnector(fd, resources->connectors[index]);
+        if (!candidate)
+            continue;
+        if (candidate->connection == DRM_MODE_CONNECTED && candidate->count_modes > 0) {
+            // Keep the first advertised mode unless the connector offers the Flip4 inner mode.
+            drmModeModeInfo selected = candidate->modes[0];
+            enum panel_priority priority = panel_rank(candidate->connector_type, selected.hdisplay, selected.vdisplay);
+            if (priority == PANEL_DSI) {
+                for (int i = 1; i < candidate->count_modes; ++i) {
+                    drmModeModeInfo current = candidate->modes[i];
+                    if (panel_rank(candidate->connector_type, current.hdisplay, current.vdisplay) == PANEL_FLIP4_INNER) {
+                        selected = current;
+                        priority = PANEL_FLIP4_INNER;
+                        break;
+                    }
+                }
+            }
+            if (priority > rank) {
+                drmModeFreeConnector(connector);
+                connector = candidate;
+                mode = selected;
+                rank = priority;
+            }
+        }
+        if (candidate != connector)
+            drmModeFreeConnector(candidate);
     }
     if (!connector)
         goto cleanup;
-    drmModeEncoder *encoder = drmModeGetEncoder(fd, connector->encoder_id);
-    uint32_t crtc = encoder && encoder->crtc_id ? encoder->crtc_id : resources->crtcs[0];
-    drmModeFreeEncoder(encoder);
-    previous = drmModeGetCrtc(fd, crtc);
-    drmModeModeInfo mode = connector->modes[0];
+    previous = find_crtc(fd, resources, connector);
+    if (!previous)
+        goto cleanup;
+    uint32_t crtc = previous->crtc_id;
     buffer.width = mode.hdisplay;
     buffer.height = mode.vdisplay;
     buffer.bpp = 32;
@@ -167,7 +213,7 @@ int main(void) {
         if (!confirm)
             draw_frame(pixels, &buffer, -1);
         if (!confirm || !draw_confirmation(pixels, &buffer, request))
-            input = open_input(&touch);
+            input = open_input(&touch, rank);
         if (input >= 0 &&
             !drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode)) {
             printf("%s %ux%u\n", confirm ? "AIOS_CONFIRM_READY" : "AIOS_FRAME_READY",
