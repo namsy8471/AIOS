@@ -3,6 +3,23 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot the minimal Rust core on an emulated ARM64 Cortex-A53
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace rust:alpine sh -ec '
+            apk add --no-cache bash coreutils cpio findutils gcc binutils linux-virt musl-dev qemu-system-aarch64 sudo
+            bash scripts/boot-test.sh /boot/vmlinuz-virt
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aios-arm64-virt-initramfs
+          path: |
+            build/initramfs.gz
+            build/serial.log
   boot:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
