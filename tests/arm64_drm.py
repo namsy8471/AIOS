@@ -38,13 +38,22 @@ def qmp(stream, name, arguments=None):
     raise RuntimeError("QEMU monitor disconnected")
 
 
-def verify_frame(path):
+def verify_frame(path, colors):
     magic, dimensions, depth, pixels = path.read_bytes().split(b"\n", 3)
     width, height = map(int, dimensions.split())
     assert magic == b"P6" and depth == b"255" and len(pixels) == 3 * width * height
     row = height // 2 * width
     samples = [pixels[(row + x) * 3:(row + x) * 3 + 3] for x in (width // 6, width // 2, width * 5 // 6)]
-    return samples == [bytes.fromhex(color) for color in ("cc3322", "22aa55", "2244cc")]
+    return samples == [bytes.fromhex(color) for color in colors]
+
+
+def capture_frame(stream, screenshot, colors):
+    for _ in range(10):
+        qmp(stream, "screendump", {"filename": str(screenshot.resolve())})
+        if verify_frame(screenshot, colors):
+            return
+        time.sleep(0.2)
+    raise RuntimeError("QEMU scanout did not contain the expected diagnostic colors")
 
 
 with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
@@ -69,13 +78,22 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
             with connection.makefile("rwb", buffering=0) as stream:
                 assert "QMP" in json.loads(stream.readline())
                 qmp(stream, "qmp_capabilities")
-                for _ in range(10):
-                    qmp(stream, "screendump", {"filename": str(screenshot.resolve())})
-                    if verify_frame(screenshot):
-                        break
-                    time.sleep(0.2)
-                else:
-                    raise RuntimeError("QEMU scanout did not contain the diagnostic colors")
+                capture_frame(stream, screenshot, ("cc3322", "22aa55", "2244cc"))
+                qmp(stream, "input-send-event", {"events": [
+                    {"type": "abs", "data": {"axis": "x", "value": 24576}},
+                    {"type": "abs", "data": {"axis": "y", "value": 16384}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                ]})
+                qmp(stream, "input-send-event", {"events": [
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ]})
+                tapped = wait(vm, log, "AIOS_")
+                assert tapped.startswith("AIOS_POINTER_TAP "), tapped
+                x, y = map(int, tapped.split()[1:])
+                width, height = map(int, frame.split()[1].split("x"))
+                assert abs(x - width * 3 / 4) <= 2 and abs(y - height / 2) <= 2, (x, y)
+                capture_frame(stream, output / "after-tap.ppm", ("cc3322", "22aa55", "f2c94c"))
+                report["pointer_tap"] = {"x": x, "y": y}
         assert command(vm, log, "", "AIOS_") == "AIOS_FRAME_DONE"
         report["scanout_verified"] = frame.removeprefix("AIOS_FRAME_READY ")
         vm.stdin.write(b"poweroff\n")
