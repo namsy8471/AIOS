@@ -9,7 +9,12 @@ stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
 
 unpack_bootimg --boot_img "$reference" --out "$stage/reference"
-mkbootimg --header_version 2 --pagesize 4096 --base 0 \
+# Ubuntu's packaged mkbootimg imports a missing GKI module. Use AOSP's
+# standalone v2 implementation and verify the exact bytes before running it.
+curl -fsSL --retry 3 'https://android.googlesource.com/platform/system/core/+/f74ff74475494e25ab27a507ff55bfefb78ff905/mkbootimg/mkbootimg.py?format=TEXT' \
+  | base64 -d > "$stage/mkbootimg.py"
+(cd "$stage" && echo '9601797b2d1a8ef6494ebd190809479b38bbde38f76709ecc9293b96ab1be65d  mkbootimg.py' | sha256sum -c -)
+python3 "$stage/mkbootimg.py" --header_version 2 --pagesize 4096 --base 0 \
   --kernel_offset 0x8000 --ramdisk_offset 0x02000000 \
   --tags_offset 0x01e00000 --dtb_offset 0x01f00000 \
   --kernel "$stage/reference/kernel" --ramdisk "$probe/early-init.cpio.gz" \
