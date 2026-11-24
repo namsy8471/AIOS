@@ -102,6 +102,8 @@ python3 flip4_model.py work.raw --show
 
 첫 실행은 저장된 ‘장보기’ 메모를 출력합니다. 호스트에서 프로젝트의 로컬 모델 서버가 18080 포트로 실행 중이면 `python3 flip4_model.py work.raw --instruction "메모 끝에 '우유' 한 줄을 추가해 줘."`로 편집합니다. 같은 디스크에 `--show`를 다시 실행하면 새로 부팅한 게스트가 저장된 본문을 읽습니다.
 
+읽기 전용 시스템과 별도 문서 파티션으로 부팅하려면 `split-starter.raw`를 `split-work.raw`로 복사한 후 `python3 flip4_model.py split-work.raw --split-disk --offline --interactive`를 실행합니다. 저장한 내용은 `python3 flip4_model.py split-work.raw --split-disk --show`로 다시 읽습니다. Windows에서는 `qemu-system-aarch64.exe`가 실행 경로에 있어야 합니다.
+
 ### x86_64 부팅 데모
 
 QEMU가 Linux 커널을 부팅하면 커널이 initramfs의 `/init`을 PID 1로 실행합니다. 이 Rust 프로그램은 임시 디렉터리에 문서를 저장하고, 모달이 열리거나 관측 시점의 문서 버전이 오래되면 후속 저장을 중단합니다. 마지막으로 파일 내용을 다시 읽어 최초 저장본이 유지됐는지 확인하고 VM을 종료합니다. 편집기 상태는 메모리에서 모사합니다.

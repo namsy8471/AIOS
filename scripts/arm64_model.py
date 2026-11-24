@@ -121,15 +121,20 @@ def main(launch=None):
     engine = parser.add_mutually_exclusive_group()
     engine.add_argument("--offline", action="store_true", help="use built-in Korean memo commands in the guest")
     engine.add_argument("--guest-model", action="store_true", help="use built-in Korean commands with local model inference for additional phrasings")
+    if launch:
+        parser.add_argument("--split-disk", action="store_true", help="boot the disk with a separate read-only system partition")
     args = parser.parse_args()
     launcher = Path(__file__).resolve().with_name("arm64-console.sh")
-    starter = launcher.with_name("starter.raw")
-    if not args.disk.is_file() or (starter.is_file() and args.disk.samefile(starter)):
+    starters = [launcher.with_name(name) for name in ("starter.raw", "split-starter.raw")]
+    if not args.disk.is_file() or any(path.is_file() and args.disk.samefile(path) for path in starters):
         parser.error("provide a separate working disk")
     if args.instruction is not None and not args.instruction.strip():
         parser.error("empty instruction")
 
-    vm_args = launch(args.disk, guest_model=args.guest_model) if launch else ["bash", launcher, args.disk]
+    vm_args = (
+        launch(args.disk, guest_model=args.guest_model, split_disk=args.split_disk)
+        if launch else ["bash", launcher, args.disk]
+    )
     with subprocess.Popen(vm_args, stdin=subprocess.PIPE,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as vm:
         try:

@@ -18,8 +18,7 @@ def system_hash():
         return hashlib.sha256(raw.read(16 * 1024 * 1024)).hexdigest()
 
 
-args = launch(disk)
-args[-1] = args[-1].replace("root=/dev/sda ", "root=/dev/sda1 ").replace("rootwait rw", "rootwait ro")
+args = launch(disk, split_disk=True)
 before = system_hash()
 original = "장보기"
 saved = original + "\n독립 저장"
