@@ -15,8 +15,8 @@ function Invoke-EditorCommand($observation, $toolkitName, $line) {
             $control = $observation
             $nodes = @(
                 @{element_id='body'; name='Document'; role='textbox'; actions=@('append');
-                  value=(Read-DocumentValue $control).Replace("`r`n", "`n")}
-                @{element_id='save'; name='Save'; role='button'; actions=@('invoke')}
+                  bbox=$control.BodyBounds; value=(Read-DocumentValue $control).Replace("`r`n", "`n")}
+                @{element_id='save'; name='Save'; role='button'; actions=@('invoke'); bbox=$control.SaveBounds}
             )
         }
         return (@{state=$observation.State; elements=$nodes} | ConvertTo-Json -Depth 5 -Compress)

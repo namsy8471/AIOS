@@ -69,31 +69,28 @@ def measure(toolkit, base):
             else:
                 raise AssertionError("Consumed observation accepted")
         current = session.observe()
-        if os.name != "nt":
-            for disturbance, reply in (("move-save", "moved"), ("inject-modal", "injected")):
-                dispatched = []
-                def interrupt_after_second(line):
-                    result = send(adapter, line)
-                    if line != "observe":
-                        dispatched.append(line)
-                        if len(dispatched) == 2:
-                            assert send(fixture, disturbance) == reply
-                    return result
+        for disturbance, reply in (("move-save", "moved"), ("inject-modal", "injected")):
+            dispatched = []
+            def interrupt_after_second(line):
+                result = send(adapter, line)
+                if line != "observe":
+                    dispatched.append(line)
+                    if len(dispatched) == 2:
+                        assert send(fixture, disturbance) == reply
+                return result
 
-                guarded = EditorSession(interrupt_after_second)
-                steps = [("body", "append", "첫째"), ("body", "append", "둘째"),
-                         ("save", "invoke", None), ("body", "append", "넷째"), ("save", "invoke", None)]
-                try:
-                    guarded.act_batch(guarded.observe(), steps)
-                except ValueError as error:
-                    assert "layout changed" in str(error), error
-                else:
-                    raise AssertionError("Changed layout allowed the batch to complete")
-                assert dispatched == ["append 첫째", "append 둘째"]
-                assert document.read_bytes() == expected.encode()
-                print(f"{toolkit} {disturbance}: dispatched 2/5, persisted document unchanged", flush=True)
-        else:
-            assert send(fixture, "inject-modal") == "injected"
+            guarded = EditorSession(interrupt_after_second)
+            steps = [("body", "append", "첫째"), ("body", "append", "둘째"),
+                     ("save", "invoke", None), ("body", "append", "넷째"), ("save", "invoke", None)]
+            try:
+                guarded.act_batch(guarded.observe(), steps)
+            except ValueError as error:
+                assert "layout changed" in str(error), error
+            else:
+                raise AssertionError("Changed layout allowed the batch to complete")
+            assert dispatched == ["append 첫째", "append 둘째"]
+            assert document.read_bytes() == expected.encode()
+            print(f"{toolkit} {disturbance}: dispatched 2/5, persisted document unchanged", flush=True)
         assert session.observe()["elements"] == []
         try:
             session.act(current, button["element_id"], "invoke")

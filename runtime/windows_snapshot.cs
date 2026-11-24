@@ -8,6 +8,14 @@ public sealed class EditorSnapshot {
     public ValuePattern Text;
     public InvokePattern Save;
     public AutomationElement Window;
+    public double[] BodyBounds;
+    public double[] SaveBounds;
+
+    private static double[] Bounds(AutomationElement node, EditorSnapshot result) {
+        var rect = node.Cached.BoundingRectangle;
+        var window = result.Window.Cached.BoundingRectangle;
+        return new double[] { rect.X - window.X, rect.Y - window.Y, rect.Width, rect.Height };
+    }
 
     private static void Visit(AutomationElement node, string title, bool native,
                               bool inside, EditorSnapshot result) {
@@ -20,16 +28,19 @@ public sealed class EditorSnapshot {
                 info.ClassName.IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0) {
                 if (result.Handle != 0) throw new InvalidOperationException("Ambiguous edit control");
                 result.Handle = info.NativeWindowHandle;
+                result.BodyBounds = Bounds(node, result);
             }
             if (!native && info.Name == "Document") {
                 if (result.Text != null) throw new InvalidOperationException("Ambiguous document");
                 result.Text = (ValuePattern)node.GetCachedPattern(ValuePattern.Pattern);
+                result.BodyBounds = Bounds(node, result);
             }
             if (info.Name == "Save") {
                 object pattern;
                 if (node.TryGetCachedPattern(InvokePattern.Pattern, out pattern)) {
                     if (result.Save != null) throw new InvalidOperationException("Ambiguous save button");
                     result.Save = (InvokePattern)pattern;
+                    result.SaveBounds = Bounds(node, result);
                 }
             }
         }
@@ -45,6 +56,7 @@ public sealed class EditorSnapshot {
         cache.Add(AutomationElement.NameProperty);
         cache.Add(AutomationElement.ClassNameProperty);
         cache.Add(AutomationElement.NativeWindowHandleProperty);
+        cache.Add(AutomationElement.BoundingRectangleProperty);
         cache.Add(WindowPattern.IsModalProperty);
         cache.Add(InvokePattern.Pattern);
         if (!native) cache.Add(ValuePattern.Pattern);

@@ -40,6 +40,7 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     Add-Type -AssemblyName System.Windows.Forms
     $form = [Windows.Forms.Form]::new()
     $form.Text = 'AIOS test editor'
+    $form.Width = 800
     $form.AccessibleName = 'AIOS test editor'
     $body = [Windows.Forms.TextBox]::new()
     $body.Multiline = $true
@@ -60,7 +61,10 @@ if ($Editor -and $Toolkit -eq 'winforms') {
     })
     $layout = [Windows.Forms.FlowLayoutPanel]::new()
     $layout.Dock = 'Fill'
-    foreach ($item in $body, $save, $inject) { $layout.Controls.Add($item) }
+    $move = [Windows.Forms.Button]::new()
+    $move.Text = 'Move save'
+    $move.Add_Click({ $m = $save.Margin; $m.Left += 200; $save.Margin = $m })
+    foreach ($item in $body, $save, $inject, $move) { $layout.Controls.Add($item) }
     $form.Controls.Add($layout)
     if ($Clock) { Start-EditorClock }
     $form.Show()
@@ -74,6 +78,7 @@ if ($Editor) {
     $window.Title = 'AIOS test editor'
     $body = [Windows.Controls.TextBox]::new()
     $body.AcceptsReturn = $true
+    $body.Height = 160
     $body.Text = [IO.File]::ReadAllText($Document)
     [Windows.Automation.AutomationProperties]::SetName($body, 'Document')
     $save = [Windows.Controls.Button]::new()
@@ -90,7 +95,13 @@ if ($Editor) {
         [void]$dialog.ShowDialog()
     })
     $panel = [Windows.Controls.StackPanel]::new()
-    foreach ($item in $body, $save, $inject) { [void]$panel.Children.Add($item) }
+    $move = [Windows.Controls.Button]::new()
+    $move.Content = 'Move save'
+    $move.Add_Click({
+        $scale = [Windows.PresentationSource]::FromVisual($save).CompositionTarget.TransformToDevice.M11
+        $save.Margin = [Windows.Thickness]::new(200 / $scale, 0, 0, 0)
+    })
+    foreach ($item in $body, $save, $inject, $move) { [void]$panel.Children.Add($item) }
     $window.Content = $panel
     if ($Clock) { Start-EditorClock }
     [void]$window.ShowDialog()
@@ -154,7 +165,18 @@ try {
     while ($null -ne ($line = [Console]::ReadLine())) {
         if ($line -eq 'pid') { [Console]::WriteLine($child.Id); continue }
         $observation = Get-State
-        if ($line -eq 'inject-modal' -and $observation.State -eq 'ready') {
+        if ($line -eq 'move-save' -and $observation.State -eq 'ready') {
+            $origin = $observation.SaveBounds[0]
+            $button = $observation.Window.FindFirst([Windows.Automation.TreeScope]::Descendants,
+                [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Move save'))
+            $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            while ((Get-State).SaveBounds[0] -ne $origin + 200) {
+                if ($timer.Elapsed.TotalSeconds -gt 3) { throw 'Save button did not move 200 pixels' }
+                Start-Sleep -Milliseconds 10
+            }
+            [Console]::WriteLine('moved')
+        } elseif ($line -eq 'inject-modal' -and $observation.State -eq 'ready') {
             $button = $observation.Window.FindFirst([Windows.Automation.TreeScope]::Descendants,
                 [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Open modal'))
             $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
