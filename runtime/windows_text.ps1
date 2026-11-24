@@ -1,4 +1,5 @@
-if ($Toolkit -eq 'winforms' -and !('NativeEditorText' -as [type])) {
+function Initialize-NativeEditorText {
+    if ('NativeEditorText' -as [type]) { return }
     Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -31,6 +32,7 @@ public static class NativeEditorText {
 function Get-DocumentControl($window, $toolkitName) {
     $scope = [Windows.Automation.TreeScope]::Descendants
     if ($toolkitName -eq 'winforms') {
+        Initialize-NativeEditorText
         $fields = @($window.FindAll($scope, [Windows.Automation.Condition]::TrueCondition) |
             Where-Object { $_.Current.ClassName -match 'EDIT' -and $_.Current.NativeWindowHandle -ne 0 })
         if ($fields.Count -ne 1) { throw 'Expected one native edit control' }

@@ -9,12 +9,12 @@ Add-Type -AssemblyName PresentationFramework, UIAutomationClient, UIAutomationTy
 
 function Start-EditorClock {
     $script:sequence = 0
-    $script:changes = [Collections.Generic.List[long]]::new()
+    $script:changes = [Collections.Generic.List[string]]::new()
     $script:nextChange = [Threading.EventWaitHandle]::new(
         $false, [Threading.EventResetMode]::AutoReset, "Local\AIOS-clock-$PID")
     $body.Add_TextChanged({
         $changed = [Diagnostics.Stopwatch]::GetTimestamp()
-        $script:changes.Add($changed)
+        $script:changes.Add("$($body.Text)`t$changed")
         if ($script:changes.Count -eq 100) {
             [IO.File]::WriteAllLines("$Document.clock.tmp", [string[]]$script:changes)
             [IO.File]::Move("$Document.clock.tmp", "$Document.clock")
@@ -160,13 +160,16 @@ try {
         while (!(Test-Path -LiteralPath "$Document.clock") -and $limit.Elapsed.TotalSeconds -lt 5) {
             [Threading.Thread]::Sleep(5)
         }
-        $changed = [long[]][IO.File]::ReadAllLines("$Document.clock")
-        if ($changed.Count -ne $observed.Count) { throw 'Unpaired observations' }
+        $records = [IO.File]::ReadAllLines("$Document.clock")
+        if ($records.Count -ne $observed.Count) { throw 'Unpaired observations' }
         $frequency = [Diagnostics.Stopwatch]::Frequency
         $samples = for ($i = 0; $i -lt $observed.Count; $i++) {
-            $elapsed = $observed[$i] - $changed[$i]
+            $value, $stamp = $records[$i] -split "`t", 2
+            if ($value -cne "$([char]0xAD00)$([char]0xCE21) $($i + 1)") { throw 'Source value mismatch' }
+            $changed = [long]$stamp
+            $elapsed = $observed[$i] - $changed
             if ($elapsed -lt 0) { throw 'Observation preceded its source' }
-            [ordered]@{ index = $i + 1; changed_ticks = $changed[$i]; observed_ticks = $observed[$i];
+            [ordered]@{ index = $i + 1; changed_ticks = $changed; observed_ticks = $observed[$i];
                 latency_ms = $elapsed * 1000.0 / $frequency }
         }
         $times = @($samples | ForEach-Object { $_.latency_ms } | Sort-Object)
