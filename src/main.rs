@@ -4,6 +4,8 @@ mod agent;
 #[cfg(target_os = "linux")]
 mod document;
 #[cfg(target_os = "linux")]
+mod hardware;
+#[cfg(target_os = "linux")]
 mod stream_worker;
 #[cfg(target_os = "linux")]
 mod workspace;
@@ -143,6 +145,11 @@ fn main() -> io::Result<std::process::ExitCode> {
         #[cfg(target_os = "linux")]
         if command == "kernel-capabilities" {
             println!("{}", kernel_capabilities());
+            return Ok(std::process::ExitCode::SUCCESS);
+        }
+        #[cfg(target_os = "linux")]
+        if command == "display-capabilities" {
+            println!("{}", hardware::display_capabilities()?);
             return Ok(std::process::ExitCode::SUCCESS);
         }
         #[cfg(target_os = "linux")]
