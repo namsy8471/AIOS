@@ -74,7 +74,7 @@ fn kernel_capabilities() -> serde_json::Value {
 fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
-        return document_console();
+        return document_console(Path::new("/work"), true);
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/aios-boot-probe").is_file() {
@@ -98,6 +98,16 @@ fn main() -> io::Result<std::process::ExitCode> {
     }
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
+        #[cfg(target_os = "linux")]
+        if command == "document-console" {
+            let work = args
+                .next()
+                .ok_or_else(|| io::Error::other("expected a workspace directory"))?;
+            if args.next().is_some() {
+                return Err(io::Error::other("expected only a workspace directory"));
+            }
+            return document_console(Path::new(&work), false);
+        }
         #[cfg(target_os = "linux")]
         if command == "append-stream-worker" || command == "probe-stream-worker" {
             let addition = args
@@ -357,12 +367,12 @@ fn model_append_text(instruction: &str) -> io::Result<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn document_console() -> io::Result<std::process::ExitCode> {
+fn document_console(work: &Path, guest_init: bool) -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
     use std::io::BufRead;
-    let path = Path::new("/work/note.txt");
-    let staged = Path::new("/work/.aios-note-staging");
-    if Path::new("/etc/aios-qemu-work-partition").is_file() {
+    let path = work.join("note.txt");
+    let staged = work.join(".aios-note-staging");
+    if guest_init && Path::new("/etc/aios-qemu-work-partition").is_file() {
         // This image's second partition is dedicated to documents.
         let flags = libc::MS_NODEV | libc::MS_NOSUID | libc::MS_NOEXEC;
         if unsafe {
@@ -378,20 +388,33 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             return Err(io::Error::last_os_error());
         }
     }
-    let stream = Path::new("/etc/aios-stream-worker").is_file();
+    let stream = !guest_init || Path::new("/etc/aios-stream-worker").is_file();
+    let executable = if guest_init {
+        "/init".into()
+    } else {
+        std::env::current_exe()?
+    };
     if stream {
         use std::os::unix::process::ExitStatusExt;
-        let status =
-            stream_worker::run(fs::File::options().write(true).open("/dev/null")?, "", true)?;
+        let status = stream_worker::run(
+            &executable,
+            fs::File::options().write(true).open("/dev/null")?,
+            "",
+            true,
+        )?;
         if status.signal() != Some(libc::SIGKILL) {
             return Err(io::Error::other("strict seccomp open probe failed"));
         }
         println!("AIOS_STREAM_POLICY open-denied");
     }
-    println!("AIOS_DOCUMENT_READY pid=1");
+    println!("AIOS_DOCUMENT_READY pid={}", std::process::id());
     for request in io::stdin().lock().lines() {
         let line = request?;
         if line == "poweroff" {
+            if !guest_init {
+                println!("AIOS_REJECT invalid-request");
+                continue;
+            }
             unsafe {
                 libc::sync();
                 libc::reboot(libc::RB_POWER_OFF);
@@ -406,12 +429,12 @@ fn document_console() -> io::Result<std::process::ExitCode> {
             continue;
         }
         if line == "kernel-capabilities" {
-            std::process::Command::new("/init")
+            std::process::Command::new(&executable)
                 .arg("kernel-capabilities")
                 .status()?;
             continue;
         }
-        let original = match fs::read_to_string(path) {
+        let original = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
                 println!("AIOS_REJECT storage-read-error {error}");
@@ -432,7 +455,9 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         }
         let generated;
         let korean = line.strip_prefix("korean ");
-        let allow_model = line.strip_prefix("model-append ");
+        let allow_model = guest_init
+            .then(|| line.strip_prefix("model-append "))
+            .flatten();
         let edit = if let Some(request) = korean.or(allow_model) {
             let Some((revision, instruction)) = request.split_once(' ') else {
                 println!("AIOS_REJECT invalid-request");
@@ -493,9 +518,9 @@ fn document_console() -> io::Result<std::process::ExitCode> {
         }
         let publish = (|| -> io::Result<Option<fs::File>> {
             use std::io::Write;
-            let directory = fs::File::open("/work")?;
+            let directory = fs::File::open(work)?;
             // The console owns the staging name, including any interrupted save.
-            match fs::remove_file(staged) {
+            match fs::remove_file(&staged) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
                 _ => {}
             }
@@ -503,11 +528,11 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                 let mut output = fs::File::options()
                     .append(true)
                     .create_new(true)
-                    .open(staged)?;
+                    .open(&staged)?;
                 output.write_all(original.as_bytes())?;
-                stream_worker::run(output, &addition, false)?
+                stream_worker::run(&executable, output, &addition, false)?
             } else {
-                fs::write(staged, &original)?;
+                fs::write(&staged, &original)?;
                 std::process::Command::new("/init")
                     .args([
                         "restrict-worker",
@@ -522,12 +547,12 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                     .status()?
             };
             if !status.success()
-                || (stream && format!("{:x}", Sha256::digest(fs::read(staged)?)) != expected)
+                || (stream && format!("{:x}", Sha256::digest(fs::read(&staged)?)) != expected)
             {
                 return Ok(None);
             }
-            fs::File::open(staged)?.sync_all()?;
-            fs::rename(staged, path)?;
+            fs::File::open(&staged)?.sync_all()?;
+            fs::rename(&staged, &path)?;
             Ok(Some(directory))
         })();
         match publish {
@@ -536,16 +561,20 @@ fn document_console() -> io::Result<std::process::ExitCode> {
                 Err(error) => println!("AIOS_UNCONFIRMED revision={expected} {error}"),
             },
             Ok(None) => {
-                let _ = fs::remove_file(staged);
+                let _ = fs::remove_file(&staged);
                 println!("AIOS_REJECT worker-error");
             }
             Err(error) => {
-                let _ = fs::remove_file(staged);
+                let _ = fs::remove_file(&staged);
                 println!("AIOS_REJECT storage-write-error {error}");
             }
         }
     }
-    Err(io::Error::other("Document console lost its input"))
+    if guest_init {
+        Err(io::Error::other("Document console lost its input"))
+    } else {
+        Ok(std::process::ExitCode::SUCCESS)
+    }
 }
 
 #[cfg(target_os = "linux")]

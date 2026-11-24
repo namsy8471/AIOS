@@ -1,9 +1,15 @@
 //! Fixed append operation for the phone console. stdout is the staging file.
 use std::io;
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 
-pub fn run(output: std::fs::File, addition: &str, probe: bool) -> io::Result<ExitStatus> {
-    Command::new("/init")
+pub fn run(
+    executable: &Path,
+    output: std::fs::File,
+    addition: &str,
+    probe: bool,
+) -> io::Result<ExitStatus> {
+    Command::new(executable)
         .arg(if probe {
             "probe-stream-worker"
         } else {
@@ -30,7 +36,7 @@ pub fn worker(addition: &str, probe: bool) -> io::Result<()> {
         // Both an allowed and an ordinary failed open return to the caller.
         // Only a signal termination counts as a successful confinement probe.
         if probe {
-            libc::open(c"/work/sibling.txt".as_ptr(), libc::O_RDONLY);
+            libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
         }
         while !remaining.is_empty() {
             let n = libc::write(1, remaining.as_ptr().cast(), remaining.len());
