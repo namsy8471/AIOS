@@ -8,9 +8,15 @@ trap 'rm -rf -- "$root"' EXIT
 mkdir "$root/dev"
 install -m 0755 target/aarch64-unknown-linux-musl/release/aios "$root/init"
 strip "$root/init"
-touch "$root/aios-boot-probe"
 mknod -m 600 "$root/dev/kmsg" c 1 11
 mknod -m 600 "$root/dev/console" c 5 1
+if [[ ${3:-} == flip4-board-probe ]]; then
+  mkdir -p "$root/etc" "$root/proc" "$root/sys"
+  touch "$root/etc/aios-flip4-board-probe"
+  (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/board-probe-init.cpio.gz"
+  exit
+fi
+touch "$root/aios-boot-probe"
 if [[ ${3:-} == pstore ]]; then
   mkdir "$root/sys" "$root/pstore"
   touch "$root/aios-pstore-probe"

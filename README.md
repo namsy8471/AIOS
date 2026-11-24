@@ -110,6 +110,12 @@ bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.c
 
 병합본에는 안쪽 `B4_S6E3FAC_AMF670BS01`과 커버 `B4_S6E36W3_AMB190ZB01` 패널, STM 및 Zinitix 터치, CAPE PHY를 참조하는 UFS 컨트롤러가 선언돼 있습니다. 보드 후보는 QEMU에서 로드한 80개 모듈에 터치 I²C, UFS PHY, CAPE 클록과 핀 제어 및 그 모듈 의존성을 더해 88개를 패키징합니다. `board.json`은 터치 노드가 선언한 펌웨어와 원본 복구 램디스크에서 검색된 경로를 기록합니다. 고정된 복구 램디스크에는 두 터치 펌웨어 경로가 모두 없습니다. 실기에서 필요한 펌웨어 확보, 드라이버 바인딩, 화면·터치 동작과 UFS 저장은 별도 검증이 필요합니다.
 
+### 플립4 초기 부팅 진단
+
+`flip4-board-diagnostics`의 서명되지 않은 참조 이미지는 Android나 문서 디스크 없이 Linux/Rust PID 1을 실행합니다. PID 1은 CAPE SoC 530과 플립4의 터치·디스플레이·UFS 노드를 실행 중인 기기 트리에서 확인한 뒤 참조 모듈을 로드합니다. 커널이 등록한 DRM, 입력, 블록 장치의 번호와 화면 상태를 읽어 직렬 콘솔과 커널 로그에 기록합니다. 진단은 장치 파일을 만들거나 블록 장치를 열지 않습니다.
+
+`qemu-proof.json`과 두 부팅 로그는 QEMU의 가상 기기 트리에서 수행한 진단 검증입니다. QEMU에서는 명시적인 테스트 인자가 있는 부팅에서만 모듈을 로드합니다. 실기기에서 모듈이 바인딩되는지와 로그를 회수할 수 있는지는 별도 검증이 필요합니다.
+
 ### 플립4 커널로 가상 메모장 실행
 
 **Flip4 reference kernel probe**의 `flip4-reference-unsigned` 묶음에는 `aios-flip4-document-reference-unsigned.img`가 있습니다. Android v2 컨테이너에서 꺼낸 커널과 AIOS 램디스크로 QEMU를 두 번 부팅합니다. 첫 부팅에서 별도 가상 디스크에 메모를 저장하고 이전 버전으로 보낸 요청이 거절되는지 확인합니다. 두 번째 부팅에서 저장한 본문과 해시를 대조합니다. 증거는 `document-proof.json`과 두 부팅 로그에 있습니다. 이 이미지의 플립4 실기 부팅은 검증이 남아 있습니다.

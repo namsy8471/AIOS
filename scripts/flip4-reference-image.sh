@@ -2,9 +2,9 @@
 # Assemble an unsigned reference image and boot its extracted payloads in QEMU.
 set -euo pipefail
 mode=${1:-}
-if [[ $mode == --driver-image || $mode == --board-image ]]; then
+if [[ $mode == --driver-image || $mode == --board-image || $mode == --board-probe ]]; then
   reference=${2:?Pass the community recovery image}
-  document_ramdisk=${3:?Pass the extracted AIOS document ramdisk}
+  document_ramdisk=${3:?Pass the AIOS initramfs}
   out=${4:?Pass a new output directory}
 else
   reference=${1:?Pass the community recovery image}
@@ -41,26 +41,31 @@ assemble() {
 }
 
 assemble_driver_image() {
-  local destination=$1 layout=$2
-  shift 2
+  local destination=$1 layout=$2 image_name=$3
+  shift 3
   mkdir -p "$destination"
   python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay "$@"
   # The kernel unpacks both members into the same initramfs tree.
   cat "$document_ramdisk" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
-  assemble "$stage/document-with-drivers.cpio.gz" "$destination/document-with-drivers.img" \
+  assemble "$stage/document-with-drivers.cpio.gz" "$destination/$image_name" \
     "$layout" "$destination/payload"
   cp "$stage/module-overlay/order.txt" "$destination/order.txt"
 }
 
+if [[ $mode == --board-probe ]]; then
+  assemble_driver_image "$out" "$out/layout.json" aios-flip4-board-probe-unsigned.img --board-overlay
+  exit
+fi
+
 if [[ $mode == --board-image ]]; then
-  assemble_driver_image "$out" "$out/layout.json" --board-overlay
+  assemble_driver_image "$out" "$out/layout.json" document-with-drivers.img --board-overlay
   python3 scripts/flip4_board.py "$out/payload" "$out/order.txt" "$stage/module-overlay/recovery-files.txt" "$out"
   python3 scripts/inspect-phone-kernel.py "$out/payload/kernel" > "$out/kernel.json"
   exit
 fi
 
 if [[ $mode == --driver-image ]]; then
-  assemble_driver_image "$out" "$out/layout.json"
+  assemble_driver_image "$out" "$out/layout.json" document-with-drivers.img
   exit
 fi
 
@@ -87,7 +92,7 @@ fi
 cp "$stage/console-1.log" "$out/document-first-boot.log"
 cp "$stage/console-2.log" "$out/document-second-boot.log"
 
-assemble_driver_image "$stage/document-with-drivers" "$out/document-driver-layout.json"
+assemble_driver_image "$stage/document-with-drivers" "$out/document-driver-layout.json" document-with-drivers.img
 mkdir "$stage/driver-test"
 cp "$bundle/split-starter.raw" "$stage/driver-test/work.raw"
 if ! timeout 120s python3 tests/flip4_split_disk.py "$bundle" "$stage/driver-test/work.raw" \

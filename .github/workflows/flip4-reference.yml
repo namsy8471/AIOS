@@ -24,6 +24,7 @@ jobs:
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/bundle disk
             cp build/flip4/kernel scripts/flip4_model.py scripts/arm64_model.py scripts/model_mvp.py build/flip4/bundle/
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/split split-disk
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/board-probe-init flip4-board-probe
             cp build/flip4/split/split.raw build/flip4/bundle/split-starter.raw
             timeout 90s python3 tests/flip4_split_disk.py build/flip4/bundle build/flip4/split/split.raw > build/flip4/split/proof.json
             cd build/flip4/bundle
@@ -52,6 +53,11 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4/bundle/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-board-probe-init
+          path: build/flip4/board-probe-init/board-probe-init.cpio.gz
+          if-no-files-found: error
   board-candidate:
     needs: probe
     runs-on: ubuntu-24.04-arm
@@ -66,6 +72,10 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-board-probe-init
+          path: build/flip4/board-probe-init
       - name: Build the offline CAPE board candidate
         run: |
           sudo apt-get update -qq
@@ -86,6 +96,22 @@ jobs:
           cp --sparse=always "$bundle/split-starter.raw" "$board/work.raw"
           timeout 180s python3 tests/flip4_split_disk.py "$bundle" "$board/work.raw" "$board/payload" \
             --driver-order "$board/order.txt" > "$board/proof.json"
+      - name: Verify the diskless board diagnostic on QEMU virt
+        run: |
+          bundle=build/flip4
+          probe="$bundle/native-board-probe"
+          bash scripts/flip4-reference-image.sh --board-probe "$bundle/recovery.img" \
+            "$bundle/board-probe-init/board-probe-init.cpio.gz" "$probe"
+          timeout 90s python3 tests/flip4_board_boot.py "$probe" > "$probe/qemu-proof.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-board-diagnostics
+          path: |
+            build/flip4/native-board-probe/aios-flip4-board-probe-unsigned.img
+            build/flip4/native-board-probe/layout.json
+            build/flip4/native-board-probe/order.txt
+            build/flip4/native-board-probe/qemu-proof.json
+            build/flip4/native-board-probe/console-*.log
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-reference-board-candidate

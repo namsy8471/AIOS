@@ -4,6 +4,8 @@ mod agent;
 #[cfg(target_os = "linux")]
 mod document;
 #[cfg(target_os = "linux")]
+mod flip4_probe;
+#[cfg(target_os = "linux")]
 mod hardware;
 #[cfg(target_os = "linux")]
 mod stream_worker;
@@ -74,6 +76,10 @@ fn kernel_capabilities() -> serde_json::Value {
 }
 
 fn main() -> io::Result<std::process::ExitCode> {
+    #[cfg(target_os = "linux")]
+    if std::process::id() == 1 && Path::new("/etc/aios-flip4-board-probe").is_file() {
+        flip4_probe::run();
+    }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {
         if Path::new("/usr/bin/flip4-driver-loader").is_file() {

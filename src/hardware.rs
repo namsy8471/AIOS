@@ -73,3 +73,31 @@ pub fn display_capabilities() -> io::Result<Value> {
         "absolute_inputs":absolute_inputs}),
     )
 }
+
+/// Report kernel-assigned device numbers without opening the device nodes.
+pub fn device_numbers() -> io::Result<Value> {
+    let mut report = serde_json::Map::new();
+    for (kind, class, prefix) in [
+        ("drm", "/sys/class/drm", "/dev/dri"),
+        ("input", "/sys/class/input", "/dev/input"),
+        ("block", "/sys/class/block", "/dev"),
+    ] {
+        let mut devices = Vec::new();
+        for entry in entries(class)? {
+            let Some(numbers) = text(&entry.path().join("dev")) else {
+                continue;
+            };
+            let Some((major, minor)) = numbers.split_once(':').and_then(|(major, minor)| {
+                Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
+            }) else {
+                continue;
+            };
+            if let Some(name) = entry.file_name().to_str() {
+                devices
+                    .push(json!({"path":format!("{prefix}/{name}"), "major":major, "minor":minor}));
+            }
+        }
+        report.insert(kind.to_owned(), Value::Array(devices));
+    }
+    Ok(Value::Object(report))
+}
