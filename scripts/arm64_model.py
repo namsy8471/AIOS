@@ -135,7 +135,9 @@ def main(launch=None):
             log = None
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
             for instruction in requests(args):
-                info = command(vm, log, "inspect", "AIOS_DOCUMENT ")
+                info = command(vm, log, "inspect", "AIOS_")
+                if not info.startswith("AIOS_DOCUMENT revision="):
+                    raise RuntimeError(info)
                 revision = info.split()[1].split("=")[1]
                 if instruction is not None and (args.offline or args.guest_model):
                     if not instruction.isprintable() or len(instruction.encode()) > 3900:
