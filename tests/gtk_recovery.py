@@ -47,7 +47,8 @@ def verify(binary, mount):
             result = subprocess.run(
                 [binary, "workspace-run", work, "--", "dbus-run-session", "--",
                  "xvfb-run", "-a", sys.executable, tools / "gtk_recovery.py", decision],
-                env={**os.environ, "XDG_RUNTIME_DIR": runtime, "GSETTINGS_BACKEND": "memory"},
+                env={**os.environ, "XDG_RUNTIME_DIR": runtime, "HOME": runtime,
+                     "TMPDIR": runtime, "GSETTINGS_BACKEND": "memory"},
                 timeout=45)
         assert result.returncode == status
         assert (work / "note.txt").read_bytes() == expected
