@@ -67,12 +67,14 @@ def command(editor, line):
         return "blocked-" + state
     if line.startswith("append "):
         node = control(window, "Document", "EditableText")
-        old = node.get_text(0, -1)
-        if not node.set_text_contents(old + "\n" + line.removeprefix("append ")):
+        old = Atspi.Text.get_text(node, 0, -1)
+        if not Atspi.EditableText.set_text_contents(node, old + "\n" + line.removeprefix("append ")):
             raise RuntimeError("edit declined")
     elif line == "save":
         node = control(window, "Save", "Action")
-        if node.get_n_actions() != 1 or not node.do_action(0):
+        actions = [i for i in range(Atspi.Action.get_n_actions(node))
+                   if Atspi.Action.get_action_name(node, i).lower() in ("click", "press")]
+        if len(actions) != 1 or not Atspi.Action.do_action(node, actions[0]):
             raise RuntimeError("save declined")
     else:
         raise ValueError("unknown action")
