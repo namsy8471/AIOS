@@ -80,6 +80,10 @@ python3 arm64_model.py work.raw --show
 
 `python3 arm64_model.py work.raw --interactive`로 실행하면 같은 ARM64 게스트에서 지시를 이어갈 수 있습니다. 매번 저장한 본문을 다시 읽어 해시를 확인하고 결과를 한 줄의 JSON으로 출력합니다. 빈 줄을 입력하거나 입력을 닫으면 게스트가 종료됩니다.
 
+### 플립4 부팅 이미지 검사
+
+`python scripts/inspect-flip4-boot-image.py recovery.img`는 압축을 푼 Android 헤더 v2 파일에서 각 구성 요소의 위치·크기·SHA-256과 AVB 푸터 위치를 읽습니다. 커뮤니티 TWRP V2 이미지에서 확인한 페이지 크기는 4096바이트이며, 커널·DTB·복구 DTBO의 해시는 프로젝트에서 별도로 조사한 참조 파일들과 일치합니다. 푸터 검사는 파일 범위를 확인하며, 서명 검증과 실기기 호환성 판단에는 별도 증거가 필요합니다. [검사한 커뮤니티 복구 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
+
 ### 플립4 커널로 가상 메모장 실행
 
 게스트 내부에서 Qwen2.5-0.5B 추론을 실행하려면 같은 워크플로 실행의 `flip4-guest-model-disk`와 `flip4-virtual-disk`를 한 폴더에 풉니다. Linux에서 `sha256sum -c MODEL_SHA256SUMS`로 검사하고 `cp model.raw work.raw`로 작업용 디스크를 만듭니다. `python3 flip4_model.py work.raw --guest-model --instruction "메모에 '우유'를 적어줘."`를 실행하면 게스트가 본문 한 줄을 추출해 저장합니다. 표준 오류의 `inference_ms`는 모델 프로세스 시작부터 결과 검증까지의 게스트 경과 시간이며, `model_peak_rss_kib`는 해당 프로세스의 최대 상주 메모리입니다. 종료 후 `python3 flip4_model.py work.raw --show`로 저장 내용을 읽습니다.
