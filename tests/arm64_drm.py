@@ -21,7 +21,7 @@ args = [
     "-kernel", str(bundle / "vmlinuz-virt"), "-initrd", str(initramfs),
     "-drive", f"file={disk},if=virtio,format=raw",
     "-device", "virtio-gpu-pci", "-device", "virtio-tablet-pci",
-    "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rw modules=virtio_gpu,virtio_input,evdev panic=1",
+    "-append", "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw rw modules=virtio_gpu,virtio_input,evdev panic=1",
 ]
 
 
