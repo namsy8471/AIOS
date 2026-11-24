@@ -53,8 +53,26 @@ def verify(binary, mount):
         assert (work / "note.txt").read_bytes() == expected
     print("GTK saved inside its branch; cancellation preserved original; fresh editor committed")
 
+    protected = mount / "host-note"
+    protected.write_bytes(b"original host file")
+    installed = mount / "aios"
+    shutil.copy2(binary, installed)
+    for script in tools.iterdir():
+        shutil.copyfile(script, work / script.name)
+    (work / "note.txt").write_bytes(original)
+    for decision, status, expected in [("cancel", 23, original),
+                                       ("commit", 0, "시작\n검토 완료".encode())]:
+        result = subprocess.run([installed, "agent-gui-run", work, "--", sys.executable,
+                                 "-I", "/work/gtk_recovery.py", decision, protected], timeout=45)
+        assert result.returncode == status, result
+        assert (work / "note.txt").read_bytes() == expected
+        assert protected.read_bytes() == b"original host file"
+    print("Private Wayland GTK editor committed and canceled saves; host file preserved")
+
 
 if __name__ == "__main__":
     if sys.argv[1] in ("commit", "cancel"):
+        if len(sys.argv) == 3:
+            os.environ["AIOS_TEST_PROTECTED"] = sys.argv[2]
         sys.exit(edit(sys.argv[1]))
     verify(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())

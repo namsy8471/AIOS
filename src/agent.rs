@@ -8,7 +8,13 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub fn launcher(branch: &Path, args: &[OsString]) -> io::Result<Command> {
+#[derive(Clone, Copy, PartialEq)]
+pub enum Profile {
+    Document,
+    Desktop,
+}
+
+pub fn launcher(branch: &Path, args: &[OsString], profile: Profile) -> io::Result<Command> {
     let mut cmd = Command::new("/usr/bin/bwrap");
     cmd.env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -25,6 +31,26 @@ pub fn launcher(branch: &Path, args: &[OsString]) -> io::Result<Command> {
             cmd.args(["--ro-bind", dir, dir]);
         }
     }
+    if profile == Profile::Desktop {
+        cmd.args([
+            "--tmpfs",
+            "/tmp",
+            "--perms",
+            "0700",
+            "--dir",
+            "/tmp/runtime",
+        ])
+        .env("XDG_RUNTIME_DIR", "/tmp/runtime")
+        .env("HOME", "/tmp")
+        .env("GSETTINGS_BACKEND", "memory")
+        .env("GDK_BACKEND", "wayland")
+        .env("WAYLAND_DISPLAY", "wayland-aios");
+        for dir in ["/etc/fonts", "/etc/xdg"] {
+            if Path::new(dir).is_dir() {
+                cmd.args(["--ro-bind", dir, dir]);
+            }
+        }
+    }
     cmd.args(["--dev", "/dev", "--proc", "/proc", "--ro-bind"])
         .arg(std::env::current_exe()?)
         .args(["/aios-launch", "--bind"])
@@ -35,7 +61,11 @@ pub fn launcher(branch: &Path, args: &[OsString]) -> io::Result<Command> {
             "/work",
             "--",
             "/aios-launch",
-            "restrict-worker",
+            if profile == Profile::Desktop {
+                "restrict-desktop"
+            } else {
+                "restrict-worker"
+            },
         ])
         .args(args)
         .stdin(Stdio::null())
@@ -60,7 +90,7 @@ pub fn launcher(branch: &Path, args: &[OsString]) -> io::Result<Command> {
     Ok(cmd)
 }
 
-pub fn exec_worker(args: &[OsString]) -> io::Result<std::process::ExitCode> {
+pub fn exec_worker(args: &[OsString], desktop: bool) -> io::Result<std::process::ExitCode> {
     let program = args
         .first()
         .ok_or_else(|| io::Error::other("missing worker program"))?;
@@ -92,6 +122,29 @@ pub fn exec_worker(args: &[OsString]) -> io::Result<std::process::ExitCode> {
                 .map_err(io::Error::other)?;
         }
     }
+    if desktop {
+        for (path, rights) in [
+            (
+                "/tmp",
+                document | AccessFs::MakeSock | AccessFs::MakeFifo | AccessFs::MakeSym,
+            ),
+            ("/proc", AccessFs::ReadFile | AccessFs::ReadDir),
+            ("/etc/fonts", AccessFs::ReadFile | AccessFs::ReadDir),
+            ("/etc/xdg", AccessFs::ReadFile | AccessFs::ReadDir),
+            ("/dev/null", AccessFs::ReadFile | AccessFs::WriteFile),
+            ("/dev/urandom", AccessFs::ReadFile.into()),
+            ("/dev/shm", document),
+        ] {
+            if Path::new(path).exists() {
+                policy = policy
+                    .add_rule(PathBeneath::new(
+                        PathFd::new(path).map_err(io::Error::other)?,
+                        rights,
+                    ))
+                    .map_err(io::Error::other)?;
+            }
+        }
+    }
     let status = policy
         .add_rule(PathBeneath::new(
             PathFd::new("/work").map_err(io::Error::other)?,
@@ -104,6 +157,32 @@ pub fn exec_worker(args: &[OsString]) -> io::Result<std::process::ExitCode> {
         return Err(io::Error::other(
             "document policy could not be fully enforced",
         ));
+    }
+    if desktop {
+        let mut compositor = Command::new("/usr/bin/weston")
+            .args([
+                "--backend=headless-backend.so",
+                "--shell=kiosk-shell.so",
+                "--socket=wayland-aios",
+                "--idle-time=0",
+                "--no-config",
+                "--log=/tmp/weston.log",
+            ])
+            .spawn()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !Path::new("/tmp/runtime/wayland-aios").exists() {
+            if compositor.try_wait()?.is_some() || std::time::Instant::now() >= deadline {
+                return Err(io::Error::other(format!(
+                    "Weston startup failed: {}",
+                    std::fs::read_to_string("/tmp/weston.log").unwrap_or_default()
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        return Err(Command::new("/usr/bin/dbus-run-session")
+            .args(["--config-file=/usr/share/dbus-1/session.conf", "--"])
+            .args(args)
+            .exec());
     }
     Err(Command::new(program).args(&args[1..]).exec())
 }

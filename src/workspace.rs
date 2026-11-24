@@ -16,11 +16,11 @@ fn run_worker(
     branch: &Path,
     args: &[OsString],
     interrupted: &AtomicUsize,
-    agent: bool,
+    agent: Option<crate::agent::Profile>,
 ) -> io::Result<u8> {
     // util-linux binds the namespace init's lifetime to the unshare supervisor.
-    let mut command = if agent {
-        crate::agent::launcher(branch, args)?
+    let mut command = if let Some(profile) = agent {
+        crate::agent::launcher(branch, args, profile)?
     } else {
         let mut cli = Command::new("unshare");
         cli.args([
@@ -81,7 +81,7 @@ fn btrfs(operation: &str, paths: &[&Path]) -> io::Result<()> {
     Ok(())
 }
 
-pub fn run(args: &[OsString], agent: bool) -> io::Result<ExitCode> {
+pub fn run(args: &[OsString], agent: Option<crate::agent::Profile>) -> io::Result<ExitCode> {
     if args.len() < 3 || args[1] != "--" {
         return Err(io::Error::other(
             "usage: aios workspace-run PATH -- PROGRAM [ARG...]",

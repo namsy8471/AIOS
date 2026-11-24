@@ -49,12 +49,17 @@ fn main() -> io::Result<std::process::ExitCode> {
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
-        if command == "workspace-run" || command == "agent-run" {
-            return workspace::run(&args.collect::<Vec<_>>(), command == "agent-run");
+        if command == "workspace-run" || command == "agent-run" || command == "agent-gui-run" {
+            let profile = match command.to_str() {
+                Some("agent-run") => Some(agent::Profile::Document),
+                Some("agent-gui-run") => Some(agent::Profile::Desktop),
+                _ => None,
+            };
+            return workspace::run(&args.collect::<Vec<_>>(), profile);
         }
         #[cfg(target_os = "linux")]
-        if command == "restrict-worker" {
-            return agent::exec_worker(&args.collect::<Vec<_>>());
+        if command == "restrict-worker" || command == "restrict-desktop" {
+            return agent::exec_worker(&args.collect::<Vec<_>>(), command == "restrict-desktop");
         }
         return Err(io::Error::other(format!("unknown command: {command:?}")));
     }

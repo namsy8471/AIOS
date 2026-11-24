@@ -1,4 +1,5 @@
 """Small GTK and Qt editors that save only from their own button handlers."""
+import os
 import signal
 import sys
 from pathlib import Path
@@ -17,6 +18,15 @@ def gtk_editor(path):
     save = Gtk.Button(label="Save")
 
     def persist(_):
+        if protected := os.getenv("AIOS_TEST_PROTECTED"):
+            from gi.repository import Gdk
+            assert "Wayland" in Gdk.Display.get_default().__gtype__.name
+            try:
+                Path(protected).write_bytes(b"unexpected")
+            except (FileNotFoundError, PermissionError):
+                pass
+            else:
+                raise AssertionError("host path was writable from GTK")
         text = buffer.get_text(*buffer.get_bounds(), True)
         path.write_bytes(text.encode("utf-8"))
 
