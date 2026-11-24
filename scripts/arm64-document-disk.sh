@@ -57,7 +57,7 @@ if [[ ${AIOS_PACKAGE_DISPLAY:-0} == 1 ]]; then
   package=build/arm64-display-package
   mkdir -p "$package"
   cp "$bundle"/{vmlinuz-virt,arm64_model.py,model_mvp.py} "$package/"
-  cp "$stage/display-initramfs" "$package/display-initramfs"
+  install -m 0644 "$stage/display-initramfs" "$package/display-initramfs"
   cp "$stage/display.raw" "$package/display-starter.raw"
 fi
 timeout 90s python3 tests/arm64_drm.py "$bundle" "$stage/display-initramfs" "$stage/display.raw" "$display"
