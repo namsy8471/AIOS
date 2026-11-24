@@ -100,13 +100,24 @@ fn main() -> io::Result<std::process::ExitCode> {
     if let Some(command) = args.next() {
         #[cfg(target_os = "linux")]
         if command == "document-console" {
+            use std::os::fd::AsRawFd;
             let work = args
                 .next()
                 .ok_or_else(|| io::Error::other("expected a workspace directory"))?;
             if args.next().is_some() {
                 return Err(io::Error::other("expected only a workspace directory"));
             }
-            return document_console(Path::new(&work), false);
+            let work = Path::new(&work);
+            let directory = fs::File::open(work)?;
+            if !directory.metadata()?.is_dir() {
+                return Err(io::Error::other("expected a workspace directory"));
+            }
+            if unsafe { libc::flock(directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let result = document_console(work, false);
+            drop(directory);
+            return result;
         }
         #[cfg(target_os = "linux")]
         if command == "append-stream-worker" || command == "probe-stream-worker" {
