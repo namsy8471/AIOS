@@ -83,7 +83,9 @@ fn main() -> io::Result<std::process::ExitCode> {
             "kernel": kernel_capabilities(),
         });
         let mut log = fs::OpenOptions::new().write(true).open("/dev/kmsg")?;
-        writeln!(log, "<4>AIOS_EARLY_INIT {report}")?;
+        // Each write to /dev/kmsg creates a separate kernel log record.
+        let record = format!("<4>AIOS_EARLY_INIT {report}\n");
+        log.write_all(record.as_bytes())?;
         unsafe {
             libc::reboot(libc::RB_POWER_OFF);
         }
