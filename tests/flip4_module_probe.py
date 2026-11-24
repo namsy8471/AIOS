@@ -91,6 +91,9 @@ def main():
             ["cpio", "-o", "-H", "newc", "--owner=0:0", "--null", "--quiet"],
             input=("\0".join(files) + "\0").encode(), cwd=root,
         ), compresslevel=2))
+        if args.board_overlay:
+            files = subprocess.check_output(["cpio", "-it", "--quiet"], input=archive)
+            (args.output / "recovery-files.txt").write_bytes(files)
         if args.overlay:
             (args.output / "order.txt").write_text("\n".join(order) + "\n")
             return

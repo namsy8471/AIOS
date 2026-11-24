@@ -94,6 +94,7 @@ jobs:
             build/flip4/reference-board/layout.json
             build/flip4/reference-board/order.txt
             build/flip4/reference-board/board.json
+            build/flip4/reference-board/kernel.json
             build/flip4/reference-board/merged.dtb
             build/flip4/reference-board/proof.json
             build/flip4/reference-board/console-*.log

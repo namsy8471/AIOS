@@ -62,7 +62,7 @@ def check_identity(base, overlay):
     return [low, high]
 
 
-def describe(tree, order):
+def describe(tree, order, recovery_files):
     entries = dict(nodes(tree))
     phandles = {props["phandle"]: path for path, props in entries.items() if "phandle" in props}
 
@@ -109,6 +109,10 @@ def describe(tree, order):
     ):
         chip = node(path, compatible, module)
         chip["firmware"], = strings(entries[path][firmware])
+        chip["firmware_paths_in_recovery_ramdisk"] = sorted(
+            filename for filename in recovery_files
+            if filename == chip["firmware"] or filename.endswith("/" + chip["firmware"])
+        )
         chip["bus"] = node(path.rsplit("/", 1)[0], "qcom,i2c-geni", PROVIDERS["qcom,i2c-geni"])
         touch[role] = chip
 
@@ -132,6 +136,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("payload", type=Path, help="directory produced by unpack_bootimg")
     parser.add_argument("module_order", type=Path)
+    parser.add_argument("recovery_files", type=Path, help="paths listed in the original recovery ramdisk")
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     try:
@@ -139,6 +144,7 @@ def main():
         overlay = overlay_at((args.payload / "recovery_dtbo").read_bytes(), DTBO_INDEX)
         revisions = check_identity(base, overlay)
         order = args.module_order.read_text().splitlines()
+        recovery_files = set(args.recovery_files.read_text().splitlines())
         args.output.mkdir(parents=True, exist_ok=True)
         paths = {name: args.output / name for name in ("base.dtb", "overlay.dtbo", "merged.dtb")}
         paths["base.dtb"].write_bytes(base)
@@ -150,7 +156,7 @@ def main():
             "selection": {"soc_id": SOC_ID, "board_revision": BOARD_REVISION, "dtb_index": DTB_INDEX,
                           "dtbo_index": DTBO_INDEX, "overlay_board_revisions": revisions},
             "sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()},
-            "devices": describe(paths["merged.dtb"].read_bytes(), order),
+            "devices": describe(paths["merged.dtb"].read_bytes(), order, recovery_files),
             "driver_module_count": len(order),
             "driver_order_sha256": hashlib.sha256(args.module_order.read_bytes()).hexdigest(),
         }

@@ -106,9 +106,9 @@ Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플
 bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.cpio.gz build/flip4/reference-board
 ```
 
-`flip4-reference-board-candidate`에는 Android v2 참조 이미지, 구성 요소 해시 `layout.json`, 램디스크의 모듈 로드 순서 `order.txt`, 병합한 `merged.dtb`와 조사 결과 `board.json`, QEMU의 두 부팅 로그와 문서 저장·복원 결과가 들어갑니다. 빌드에서 DTB 0번과 DTBO 테이블 9번의 SoC ID와 보드 리비전 범위를 확인하고, 원본 DTB·DTBO 테이블을 부팅 이미지에 보존합니다. 병합본은 오프라인 조사에 사용합니다. 후보에 포함된 문서 램디스크의 드라이버 로더와 디스크 선택은 현재 QEMU용 커널 인자에 의존합니다.
+`flip4-reference-board-candidate`에는 Android v2 참조 이미지, 구성 요소 해시 `layout.json`, 램디스크의 모듈 로드 순서 `order.txt`, 병합한 `merged.dtb`와 조사 결과 `board.json`, 참조 커널 설정 `kernel.json`, QEMU의 두 부팅 로그와 문서 저장·복원 결과가 들어갑니다. 빌드에서 DTB 0번과 DTBO 테이블 9번의 SoC ID와 보드 리비전 범위를 확인하고, 원본 DTB·DTBO 테이블을 부팅 이미지에 보존합니다. 병합본은 오프라인 조사에 사용합니다. 후보에 포함된 문서 램디스크의 드라이버 로더와 디스크 선택은 현재 QEMU용 커널 인자에 의존합니다.
 
-병합본에는 안쪽 `B4_S6E3FAC_AMF670BS01`과 커버 `B4_S6E36W3_AMB190ZB01` 패널, STM 및 Zinitix 터치, CAPE PHY를 참조하는 UFS 컨트롤러가 선언돼 있습니다. 보드 후보는 QEMU에서 로드한 80개 모듈에 터치 I²C, UFS PHY, CAPE 클록과 핀 제어 및 그 모듈 의존성을 더해 88개를 패키징합니다. `board.json`은 터치 노드가 선언한 펌웨어 경로도 기록합니다. 실기에서 필요한 펌웨어 확보, 드라이버 바인딩, 화면·터치 동작과 UFS 저장은 별도 검증이 필요합니다.
+병합본에는 안쪽 `B4_S6E3FAC_AMF670BS01`과 커버 `B4_S6E36W3_AMB190ZB01` 패널, STM 및 Zinitix 터치, CAPE PHY를 참조하는 UFS 컨트롤러가 선언돼 있습니다. 보드 후보는 QEMU에서 로드한 80개 모듈에 터치 I²C, UFS PHY, CAPE 클록과 핀 제어 및 그 모듈 의존성을 더해 88개를 패키징합니다. `board.json`은 터치 노드가 선언한 펌웨어와 원본 복구 램디스크에서 검색된 경로를 기록합니다. 고정된 복구 램디스크에는 두 터치 펌웨어 경로가 모두 없습니다. 실기에서 필요한 펌웨어 확보, 드라이버 바인딩, 화면·터치 동작과 UFS 저장은 별도 검증이 필요합니다.
 
 ### 플립4 커널로 가상 메모장 실행
 

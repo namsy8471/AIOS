@@ -54,7 +54,8 @@ assemble_driver_image() {
 
 if [[ $mode == --board-image ]]; then
   assemble_driver_image "$out" "$out/layout.json" --board-overlay
-  python3 scripts/flip4_board.py "$out/payload" "$out/order.txt" "$out"
+  python3 scripts/flip4_board.py "$out/payload" "$out/order.txt" "$stage/module-overlay/recovery-files.txt" "$out"
+  python3 scripts/inspect-phone-kernel.py "$out/payload/kernel" > "$out/kernel.json"
   exit
 fi
 
