@@ -51,6 +51,10 @@ GTK 측정에는 편집기 시작과 저장 확인이 포함됩니다. 두 경�
 
 ### ARM64 문서 콘솔
 
+플립4 실기기 준비에는 세부 모델, 펌웨어 빌드, 실행 중인 커널 버전이 필요합니다. Windows에서 USB 디버깅을 이미 허용한 기기가 한 대 연결되어 있으면 `scripts/flip4-inventory.ps1`로 해당 값을 읽을 수 있습니다. PC에서 조사한 커뮤니티 플립4 복구 환경의 설정은 ARM64, 부팅 헤더 v2, 페이지 크기 4096을 사용합니다. 실물 펌웨어와 일치하는지는 별도 확인이 필요합니다. [플립4 복구 보드 설정](https://github.com/rainbowdashh/android_device_samsung_b4q/blob/fbe65008eff1589606ee3164a0ef91ef8b124894/BoardConfig.mk)
+
+AIOS 문서 작업자는 Landlock ABI 3 이상을 요구합니다. 조사한 SM8475 커뮤니티 커널 소스는 5.10.226이며 해당 커밋의 보안 서브시스템과 ARM64용 공통 시스템 호출 목록에서 Landlock 구현을 찾지 못했습니다. Linux에서 `aios kernel-capabilities`를 실행하거나 AIOS ARM64 콘솔에 `kernel-capabilities`를 입력하면 현재 커널에서 관측한 ABI와 조회 오류 번호를 확인할 수 있습니다. [커널 버전](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/Makefile) · [보안 서브시스템](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/tree/b04999acacba1a4f7797cb7d402b0fefe153bba9/security)
+
 **Boot and save contract** 실행의 `aios-arm64-qemu-console` 아티팩트에 Cortex-A53 가상 기기용 Linux 커널, 초기 부팅 파일, ext4 초기 디스크와 실행 스크립트가 있습니다. Linux 호스트에서 QEMU와 Bash를 사용합니다. 압축을 푼 폴더에서 다음과 같이 작업 디스크 사본을 부팅합니다.
 
 ```sh
