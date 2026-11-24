@@ -72,6 +72,9 @@ def verify(binary, mount):
         while not ready.exists() and time.monotonic() < until and pending.poll() is None:
             time.sleep(0.02)
         assert ready.exists(), "writer did not start"
+        competing = subprocess.run([*command, "-c", "open('unexpected', 'w').close()"],
+                                   capture_output=True, text=True, timeout=3)
+        assert competing.returncode != 0 and "workspace parent unavailable" in competing.stderr
         pending.send_signal(signal.SIGINT)
         assert pending.wait(timeout=3) == 130
     finally:
