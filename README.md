@@ -41,7 +41,7 @@ bash scripts/boot-iso.sh /path/to/vmlinuz build/initramfs.gz
 
 ## 부팅한 AIOS에서 문서 편집
 
-문서 실험에는 별도의 `aios-runtime.iso`를 사용합니다. 읽기 전용 ISO에는 Linux 커널, Rust PID 1, MCP 서버와 GTK 테스트 편집기가 들어갑니다. 문서는 별도의 가상 디스크에 저장합니다. 이 디스크에는 `AIOS-DATA` 레이블의 Btrfs 파일시스템과 `documents` 서브볼륨, 편집을 허용할 UTF-8 파일 `note.txt`가 있어야 합니다.
+문서 실험에는 별도의 `aios-runtime.iso`를 사용합니다. 읽기 전용 ISO에는 Linux 커널, Rust PID 1, MCP 서버와 GTK·Qt 테스트 편집기가 들어갑니다. 문서는 별도의 가상 디스크에 저장합니다. 이 디스크에는 `AIOS-DATA` 레이블의 Btrfs 파일시스템과 `documents` 서브볼륨, 편집을 허용할 UTF-8 파일 `note.txt`가 있어야 합니다.
 
 **Bootable document runtime** 워크플로는 빈 임시 디스크에 이 구조를 준비하고 QEMU를 BIOS로 부팅합니다. 첫 번째 직렬 포트는 부팅 로그와 종료 명령에, 두 번째 포트는 MCP 요청과 응답에 사용합니다. 테스트는 문서 버전을 조회하고 GTK로 한글 한 줄을 저장한 다음 이전 버전의 요청을 다시 보냅니다. VM이 종료되면 가상 디스크를 읽기 전용으로 열어 최종 바이트를 대조합니다. 성공한 실행에서는 ISO, SHA-256 체크섬, 부팅 로그를 아티팩트로 받을 수 있습니다.
 
@@ -79,7 +79,9 @@ Linux 호스트에서 MCP 클라이언트의 stdio 서버로 `runtime/mcp_server
 /opt/aios/venv/bin/python /opt/aios/runtime/mcp_server.py --aios /usr/local/bin/aios --workspace /srv/aios/documents --document note.txt
 ```
 
-운영자가 시작할 때 지정한 기존 UTF-8 문서 하나에 편집 권한이 부여됩니다. `inspect_document`는 파일명과 바이트 수, SHA-256 버전을 반환합니다. 클라이언트가 그 파일명과 버전, 추가할 한 줄을 `append_line`에 보내면 격리된 GTK 편집기가 저장하고 작업 사본의 바이트를 확인합니다. 오래된 버전으로 재호출하면 중복 추가가 거절됩니다. 파일은 최대 4 MiB, 한 줄은 최대 8 KiB이며 작업 폴더는 전용 Btrfs 서브볼륨입니다.
+운영자가 시작할 때 지정한 기존 UTF-8 문서 하나에 편집 권한이 부여됩니다. `inspect_document`는 파일명과 바이트 수, SHA-256 버전을 반환합니다. 클라이언트가 그 파일명과 버전, 추가할 한 줄을 `append_line`에 보내면 기본 편집기인 GTK로 저장하고 작업 사본의 바이트를 확인합니다. `editor`에 `qt`를 지정하면 Qt 6 편집기를 사용합니다. 오래된 버전으로 재호출하면 중복 추가가 거절됩니다. 파일은 최대 4 MiB, 한 줄은 최대 8 KiB이며 작업 폴더는 전용 Btrfs 서브볼륨입니다.
+
+클라이언트가 MCP 입력 요청(form elicitation)을 지원하면 `review: true`로 저장을 검토할 수 있습니다. 편집기가 작업 사본에 쓴 바이트를 확인한 뒤 MCP 서버가 저장 여부를 묻습니다. 클라이언트가 수락하고 `save`를 참으로 보내면 변경이 원본에 반영됩니다. 취소하거나 응답 시간이 지나면 작업 사본을 폐기합니다.
 
 ## 남은 통합 검증
 

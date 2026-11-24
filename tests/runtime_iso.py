@@ -9,9 +9,9 @@ import threading
 import time
 
 run = subprocess.run
-original = "첫 문서".encode()
+original = "첫 문서\r\n둘째 줄".encode()
 line = "부팅한 AIOS에서 저장"
-expected = original + b"\n" + line.encode()
+expected = original + b"\r\n" + line.encode()
 with tempfile.TemporaryDirectory() as temp:
     base = Path(temp)
     disk, mount, port = (base / item for item in ("workspace.raw", "volume", "mcp"))
@@ -65,6 +65,11 @@ with tempfile.TemporaryDirectory() as temp:
                                 assert review_action and not reviewed
                                 assert "note.txt" in reply["params"]["message"]
                                 reviewed = True
+                                # The editor has verified its saved bytes. A concurrent
+                                # inspect must still see the last committed revision.
+                                visible = rpc(number + 100, "tools/call",
+                                              dict(name="inspect_document", arguments={}))
+                                assert visible["structuredContent"]["revision"] == params["arguments"]["revision"]
                                 decision = dict(action=review_action)
                                 if review_action == "accept":
                                     decision["content"] = {"save": True}
@@ -94,7 +99,7 @@ with tempfile.TemporaryDirectory() as temp:
                     appended = "Qt에서 확인하고 저장"
                     saved = rpc(7, "tools/call", dict(name="append_line", arguments={
                         **qt, "line": appended}), "accept")
-                    expected += b"\n" + appended.encode()
+                    expected += b"\r\n" + appended.encode()
                     assert saved.get("structuredContent", {}).get("revision") == hashlib.sha256(expected).hexdigest(), saved
             vm.stdin.write(b"poweroff\n")
             vm.stdin.flush()
@@ -111,4 +116,4 @@ with tempfile.TemporaryDirectory() as temp:
     restored.mkdir()
     run(["btrfs", "restore", "-s", disk, restored], check=True)
     assert (restored / "documents/note.txt").read_bytes() == expected
-    print("Verified persisted UTF-8 bytes and stale request rejection")
+    print("Verified GTK and Qt commits, pending edit isolation, cancellation, stale rejection and offline CRLF bytes")
