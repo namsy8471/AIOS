@@ -265,7 +265,7 @@ jobs:
           target=target/aarch64-unknown-linux-musl/release
           mkdir -p "$proof" "$target"
           gzip -dc "$bundle/reference-model/payload/ramdisk" |
-            cpio -i --quiet --to-stdout ./init > "$target/aios"
+            cpio -i --quiet --to-stdout init > "$target/aios"
           test -s "$target/aios"
           dd if="$bundle/split-model-starter.raw" of="$proof/model-source.ext4" bs=1M skip=1 count=768 conv=sparse status=none
           bash scripts/flip4-native-volumes.sh "$proof/model-source.ext4" "$proof/volumes" sda2 sda1
