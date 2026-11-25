@@ -60,4 +60,11 @@ foreach ($name in @('tsp_stm/fst2ca78y_b4.bin', 'tsp_zinitix/ztw522_b4.bin')) {
     } else { $null }
 }
 $properties['touch_firmware_sha256'] = $firmware
+$partitions = [ordered]@{}
+foreach ($name in @('boot', 'recovery', 'vendor_boot', 'dtbo', 'vbmeta', 'super', 'userdata')) {
+    $alias = "/dev/block/by-name/$name"
+    $target = Read-DeviceValue @("if [ -L '$alias' ]; then readlink '$alias'; fi")
+    $partitions[$name] = if ($target -match '^/dev/block/[a-zA-Z0-9_/-]+$') { $target } else { $null }
+}
+$properties['android_partition_links'] = $partitions
 $properties | ConvertTo-Json
