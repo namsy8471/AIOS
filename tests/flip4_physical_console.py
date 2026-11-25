@@ -73,17 +73,25 @@ def main():
                     process.kill()
 
         result = subprocess.run(
-            console, input=f"read {saved} 0 512\n".encode(),
+            console, input=f"append {before} 오래된 변경\nread {saved} 0 512\n".encode(),
             capture_output=True, check=True, timeout=20,
         )
+        replies = result.stdout.decode().splitlines()
+        rejected = [line for line in replies if line.startswith(("AIOS_REJECT ", "AIOS_SAVED "))]
+        if rejected != ["AIOS_REJECT invalid-edit"]:
+            raise RuntimeError(f"Reopened console accepted an old revision: {rejected}")
         page, = [
             json.loads(line.removeprefix("AIOS_PAGE "))
-            for line in result.stdout.decode().splitlines() if line.startswith("AIOS_PAGE ")
+            for line in replies if line.startswith("AIOS_PAGE ")
         ]
         expected = "장보기\n우유"
         if page != {"text": expected, "revision": hashlib.sha256(expected.encode()).hexdigest(), "next_byte": None}:
             raise RuntimeError("Reopened document did not match the saved revision")
-        print(json.dumps({"model_usage": usage, "after_sigkill": page}, ensure_ascii=False))
+        digest = subprocess.check_output(adb + ["shell", "-T", "sha256sum", f"{work}/note.txt"], timeout=20)
+        if digest.decode().split()[0] != page["revision"]:
+            raise RuntimeError("On-device file differs from the reopened document")
+        print(json.dumps({"model_usage": usage, "after_sigkill": page, "stale_revision_rejected": True},
+                         ensure_ascii=False))
     finally:
         shell("rm", "-f", executable, f"{remote}/llama-simple", f"{remote}/model.gguf",
               f"{work}/note.txt", f"{work}/.aios-note-staging")
