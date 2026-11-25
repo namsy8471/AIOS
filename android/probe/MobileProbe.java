@@ -9,6 +9,7 @@ import android.util.Base64;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -29,11 +30,13 @@ public final class MobileProbe extends Instrumentation {
             if (!probe.isDirectory() && !probe.mkdirs()) throw new IllegalStateException("Cannot create probe workspace");
             MobileEngine engine = new MobileEngine(app, probe);
             JSONObject report = new JSONObject().put("mode", mode);
-            if ("local".equals(mode) || "large".equals(mode)) {
+            if ("direct".equals(mode)) {
+                checkDirectMemo(engine, report);
+            } else if ("local".equals(mode) || "large".equals(mode)) {
                 long start = SystemClock.elapsedRealtime();
                 String original = engine.memoText();
                 String revision = MobileEngine.sha(original);
-                String line = engine.proposeLine("메모에 '우유'를 적어줘.", "large".equals(mode));
+                String line = engine.inferMemoLine("메모에 '우유'를 적어줘.", "large".equals(mode));
                 if (!"우유".equals(line) || !engine.memoText().equals(original)) throw new AssertionError("Invalid unsaved proposal");
                 long preview = SystemClock.elapsedRealtime();
                 engine.saveMemo(revision, line);
@@ -69,6 +72,57 @@ public final class MobileProbe extends Instrumentation {
         } catch (Throwable error) {
             result.putString("aios_error", error.toString());
             finish(Activity.RESULT_CANCELED, result);
+        }
+    }
+
+    private static void checkDirectMemo(MobileEngine engine, JSONObject report) throws Exception {
+        for (String[] example : new String[][]{
+            {"메모에 우유 추가", "우유"}, {"메모에 '우유'를 적어줘.", "우유"},
+            {"메모에 \"저지방 우유 2개\" 추가", "저지방 우유 2개"}
+        }) {
+            if (!example[1].equals(MobileEngine.directMemoLine(example[0]))) {
+                throw new AssertionError("Unrecognized direct memo format");
+            }
+        }
+        for (String example : new String[]{"메모에 우유를 적어줘.", "메모에 우유 추가하지 마",
+            "메모에서 우유 삭제", "메모에 우유 추가하고 달걀도 추가", "메모에 ' ' 추가"}) {
+            if (MobileEngine.directMemoLine(example) != null) throw new AssertionError("Ambiguous text matched");
+        }
+        try {
+            MobileEngine.directMemoLine("메모에 '우유\n달걀' 추가");
+            throw new AssertionError("Multiline input matched");
+        } catch (java.io.IOException expected) {
+            // The same input validation applies before selecting a preview path.
+        }
+        String original = engine.memoText();
+        long[] times = new long[100];
+        String line = "";
+        for (int i = 0; i < times.length; i++) {
+            long start = SystemClock.elapsedRealtimeNanos();
+            String revision = MobileEngine.sha(engine.memoText());
+            line = engine.proposeLine("메모에 '우유'를 적어줘.", true);
+            times[i] = SystemClock.elapsedRealtimeNanos() - start;
+            if (!"우유".equals(line) || !MobileEngine.sha(original).equals(revision)) {
+                throw new AssertionError("Invalid direct preview");
+            }
+        }
+        if (!original.equals(engine.memoText())) throw new AssertionError("Preview modified the memo");
+        if (!"우유".equals(engine.proposeLine("메모에 우유를 적어줘.", false))) {
+            throw new AssertionError("The model fallback did not preserve the memo text");
+        }
+        long first = times[0];
+        Arrays.sort(times);
+        report.put("trials", times.length).put("first_us", first / 1000.0)
+            .put("median_us", (times[49] + times[50]) / 2000.0).put("p95_us", times[94] / 1000.0);
+        String revision = MobileEngine.sha(original);
+        engine.saveMemo(revision, line);
+        String separator = original.isEmpty() || original.endsWith("\n") ? "" : "\n";
+        if (!(original + separator + line).equals(engine.memoText())) throw new AssertionError("Memo was not saved");
+        try {
+            engine.saveMemo(revision, line);
+            throw new AssertionError("Accepted a stale revision");
+        } catch (java.io.IOException expected) {
+            // Approval remains bound to the previewed revision.
         }
     }
 }

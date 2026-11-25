@@ -45,6 +45,28 @@ Windows에서 `llama-server`를 `127.0.0.1:18080`에 열고, `python scripts/pai
 
 Windows 초안은 담당자와 기한 세 쌍을 정확히 포함했으며, 원문에 근거가 없는 문장도 생성했다. 앱에서 검토한 뒤 저장하는 흐름을 유지한다.
 
+## 플립4 메모 응답 속도 시험
+
+`메모에 우유 추가`와 `메모에 '우유'를 적어줘.`처럼 정해진 구문은 앱이 추가할 내용을 바로 추출한다. 명령을 분류하거나 결과를 만들기 위해 모델을 실행할 필요가 없다. 미리보기 후 저장하며, 그 사이에 메모가 바뀌었으면 변경을 다시 제안한다. `MobileProbe`의 `direct` 모드는 따옴표 안의 여러 단어, 부정·삭제·복합 지시의 직접 경로 제외, 경량 모델로 해석하는 구문, 승인 전 원문 유지, 승인 후 저장 및 오래된 승인 거부를 확인한다. 앱 엔진 내부에서 메모를 읽고 미리보기 내용을 준비하기까지 100회씩 두 번 계측한 중앙값은 **0.26~0.27 ms**, 95백분위수는 **0.41~0.97 ms**였다. 화면이 실제로 그려지는 시간은 계측에서 제외했다.
+
+네이티브 벤치마크는 같은 3B GGUF와 같은 한국어 프롬프트를 사용하고 매 요청마다 `우유`를 추가하는 JSON을 검증한다. 첫 요청에는 모델과 컨텍스트 초기화가 포함된다. 뒤 세 요청은 모델과 컨텍스트를 유지하고 이전 요청의 KV 상태를 지운 뒤 추론한다. 파일 시스템 캐시 또는 기기 온도를 강제로 맞추는 조작은 하지 않았다.
+
+| CPU 스레드 | 첫 요청 | 모델 유지 후 중앙값 |
+| --- | ---: | ---: |
+| 4, 첫 측정 | 7.66초 | 6.67초 |
+| 2 | 13.76초 | 15.56초 |
+| 6 | 9.00초 | 9.58초 |
+| 8 | 10.51초 | 9.90초 |
+| 4, 마지막 재측정 | 11.18초 | 10.51초 |
+
+4스레드로 재사용했을 때 첫 요청보다 0.66~0.99초 짧았다. 벤치마크 프로세스 최대 RSS는 약 2.02 GiB였다. CPU 시험 중 배터리 센서는 28.1°C에서 33.0°C로 변했다. GPU Vulkan 빌드는 Adreno 730을 열었으며, 전체 오프로딩과 8개 레이어 부분 오프로딩 모두 모델을 올리는 중 `SIGSEGV`로 종료됐다.
+
+OpenCL은 Adreno 730에 37개 레이어 전체, 8개, 1개를 각각 오프로딩하고 두 요청을 시험했다. 전체 오프로딩은 첫 요청 29.09초, 재사용 요청 4.42초였고 8개는 각각 34.23초와 15.84초였다. 두 구성의 출력은 메모 추가 계약을 통과하지 못했다. 1개는 두 요청 모두 정확했고 각각 25.82초와 7.74초였다. 일반 APK에는 메모 직접 처리 경로를 적용했다. 모델과 컨텍스트 유지 및 GPU 오프로딩은 별도 계측 APK에서 실행했다.
+
+재현 시 `scripts/build-mobile-model-runner.ps1`로 Android ARM64 모델 실행기를 먼저 빌드한다. Vulkan은 Visual Studio 개발자 PowerShell에서 `-VulkanSdk`와 별도 `-OutDir`을 지정한다. OpenCL은 별도 `-OutDir`과 Khronos [OpenCL-Headers](https://github.com/KhronosGroup/OpenCL-Headers/tree/82f60316cc142e7b21dc1d8983b26de18858fbd9)의 `-OpenCLHeaders`, 시험 폰에서 가져온 `/vendor/lib64/libOpenCL.so`의 `-OpenCLLibrary`를 지정한다.
+
+`scripts/build-mobile-inference-bench.ps1`의 `-ModelBuildDir`에 백엔드를 빌드한 디렉터리를 지정한다. OpenCL 빌드에서는 `-OpenCLLibrary`도 전달한다. 반환된 `mobile-inference-bench`를 `scripts/build-mobile-apk.ps1 -Probe -BenchmarkRunner`에 넘긴다. 계측 APK를 설치한 뒤 `tests/mobile_inference_bench.py`에 `--adb`, `--output`, 선택적으로 `--threads`와 `--gpu-layers`를 넘긴다. OpenCL에는 `--opencl`을 추가한다. 앱 전용 저장소의 대형 슬롯에 3B GGUF가 있어야 한다.
+
 ## 선택형 계정 연결
 
 폰에서는 경량 로컬 모델, Windows 위임에서는 PC 로컬 모델이 기본값이다. 앱에서 ChatGPT 또는 Claude를 선택하면 Windows를 거쳐 해당 서비스로 전달할 문서와 지시를 먼저 보여준다. Google Drive로 내보내려면 폰에 저장한 보고서를 보고 별도로 승인한다. Windows에 계정 연결이 없는 경우 요청이 실패하고 앱에서 이유를 표시한다.

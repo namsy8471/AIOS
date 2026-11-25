@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string]$AndroidJar,
     [Parameter(Mandatory)][string]$ModelRunner,
     [string]$OutDir = 'build/mobile-apk',
-    [switch]$Probe
+    [switch]$Probe,
+    [string]$BenchmarkRunner
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -13,6 +14,10 @@ $Jdk = (Resolve-Path -LiteralPath $Jdk).Path
 $BuildTools = (Resolve-Path -LiteralPath $BuildTools).Path
 $AndroidJar = (Resolve-Path -LiteralPath $AndroidJar).Path
 $ModelRunner = (Resolve-Path -LiteralPath $ModelRunner).Path
+if ($BenchmarkRunner) {
+    if (!$Probe) { throw 'BenchmarkRunner requires a probe APK' }
+    $BenchmarkRunner = (Resolve-Path -LiteralPath $BenchmarkRunner).Path
+}
 $env:JAVA_HOME = $Jdk
 $javaBin = Join-Path $Jdk 'bin'
 $env:Path = "$javaBin;$env:Path"
@@ -43,23 +48,29 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 @'
 import pathlib, struct, sys, zipfile
 
-stage, runner = map(pathlib.Path, sys.argv[1:])
-binary = runner.read_bytes()
-if binary[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", binary, 18)[0] != 183:
-    raise SystemExit("Expected an ARM64 ELF model runner")
-program_offset = struct.unpack_from("<Q", binary, 32)[0]
-entry_size, entry_count = struct.unpack_from("<HH", binary, 54)
-interpreters = []
-for index in range(entry_count):
-    kind, _, offset, _, _, size = struct.unpack_from("<IIQQQQ", binary, program_offset + index * entry_size)
-    if kind == 3:
-        interpreters.append(binary[offset:offset + size])
-if interpreters != [b"/system/bin/linker64\0"]:
-    raise SystemExit("Expected the Android NDK runner, linked for /system/bin/linker64")
+stage, runner = map(pathlib.Path, sys.argv[1:3])
+
+def android_arm64(path):
+    binary = path.read_bytes()
+    if binary[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", binary, 18)[0] != 183:
+        raise SystemExit("Expected an ARM64 ELF model runner")
+    program_offset = struct.unpack_from("<Q", binary, 32)[0]
+    entry_size, entry_count = struct.unpack_from("<HH", binary, 54)
+    interpreters = []
+    for index in range(entry_count):
+        kind, _, offset, _, _, size = struct.unpack_from("<IIQQQQ", binary, program_offset + index * entry_size)
+        if kind == 3:
+            interpreters.append(binary[offset:offset + size])
+    if interpreters != [b"/system/bin/linker64\0"]:
+        raise SystemExit("Expected the Android NDK runner, linked for /system/bin/linker64")
+    return binary
+
 with zipfile.ZipFile(stage / "unsigned.apk", "a", compression=zipfile.ZIP_DEFLATED) as apk:
     apk.write(stage / "classes.dex", "classes.dex")
-    apk.writestr("lib/arm64-v8a/libllama-runner.so", binary)
-'@ | python - $stage $ModelRunner
+    apk.writestr("lib/arm64-v8a/libllama-runner.so", android_arm64(runner))
+    if len(sys.argv) > 3 and sys.argv[3]:
+        apk.writestr("lib/arm64-v8a/libllama-bench.so", android_arm64(pathlib.Path(sys.argv[3])))
+'@ | python - $stage $ModelRunner $BenchmarkRunner
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & (Join-Path $BuildTools 'zipalign.exe') -f 4 "$stage/unsigned.apk" "$stage/aligned.apk"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }

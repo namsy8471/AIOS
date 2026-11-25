@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
         setContentView(page);
 
         label("AIOS", 28);
-        instruction = input("예: 메모에 우유를 적어 줘.", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        instruction = input("예: 메모에 우유 추가", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         status = label(engine.weights(false).isFile() ? "로컬 모델 준비됨" : "로컬 모델을 가져오세요.", 15);
         label("이 휴대폰의 메모", 20);
         memo = label("", 16);
@@ -165,7 +165,7 @@ public final class MainActivity extends Activity {
         String text = instruction.getText().toString();
         boolean larger = modelChoice.getSelectedItemPosition() == 1;
         long start = SystemClock.elapsedRealtime();
-        run("휴대폰에서 추론 중", () -> new String[] {MobileEngine.sha(engine.memoText()), engine.proposeLine(text, larger)}, proposal -> {
+        run("메모 미리 보기 준비 중", () -> new String[] {MobileEngine.sha(engine.memoText()), engine.proposeLine(text, larger)}, proposal -> {
             status.setText("미리 보기 · " + (SystemClock.elapsedRealtime() - start) + " ms");
             new AlertDialog.Builder(this).setTitle("메모에 추가할 내용").setMessage(proposal[1])
                 .setNegativeButton("취소", null).setPositiveButton("저장", (dialog, action) -> {

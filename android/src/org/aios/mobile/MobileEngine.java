@@ -15,12 +15,16 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 final class MobileEngine {
     static final int MAX_SOURCE_BYTES = 8192;
+    private static final Pattern SIMPLE_MEMO = Pattern.compile(
+        "메모에 (?:(?:'([^']+)'|\"([^\"]+)\")(?:을|를)? (?:추가|적어줘)|([\\p{L}\\p{N}]+) 추가)\\.?");
     private final File storage;
     private final File models;
     private final File nativeModelRunner;
@@ -135,12 +139,32 @@ final class MobileEngine {
     }
 
     String proposeLine(String instruction, boolean larger) throws Exception {
-        File weights = weights(larger);
-        if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
+        String line = directMemoLine(instruction);
+        return line == null ? inferMemoLine(instruction, larger) : line;
+    }
+
+    static String directMemoLine(String instruction) throws IOException {
+        validateMemoInstruction(instruction);
+        Matcher match = SIMPLE_MEMO.matcher(instruction);
+        if (!match.matches()) return null;
+        for (int group = 1; group <= match.groupCount(); group++) {
+            String line = match.group(group);
+            if (line != null) return line.isBlank() ? null : line;
+        }
+        return null;
+    }
+
+    private static void validateMemoInstruction(String instruction) throws IOException {
         if (instruction.isBlank() || instruction.getBytes(StandardCharsets.UTF_8).length > 512
                 || instruction.contains("<|") || instruction.chars().anyMatch(Character::isISOControl)) {
             throw new IOException("512바이트 이내의 한 줄 지시를 입력해 주세요.");
         }
+    }
+
+    String inferMemoLine(String instruction, boolean larger) throws Exception {
+        validateMemoInstruction(instruction);
+        File weights = weights(larger);
+        if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
         String system = "Extract the exact text to append from the Korean memo request. "
             + "Return one JSON object with tool append_line and line. No markdown. "
             + "Example: 메모에 사과를 적어줘 -> {\"tool\":\"append_line\",\"line\":\"사과\"}";
