@@ -124,6 +124,18 @@ bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.c
 
 두 펌웨어 이름은 공개 커뮤니티 B4Q 파일과 일치합니다. STM 터치용 `fst2ca78y_b4.bin`의 SHA-256은 `6a72cf52fba1b156008fa384eb2e8c8db44321d593a6c97b0e3cacdc6a6c00cb`이고, 커버 터치용 `ztw522_b4.bin`은 `c6aa076fe2741b2cadf975abdf8e40d22e8776b0385aebc0d077d0ca618482ae`입니다. 실물 펌웨어와의 호환성은 확인이 필요하며 두 파일은 AIOS 진단 이미지에 포함되지 않습니다. [STM 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_stm/fst2ca78y_b4.bin) · [Zinitix 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_zinitix/ztw522_b4.bin)
 
+### 플립4 네이티브 문서 후보
+
+네이티브 문서 램디스크는 `work=<파티션 이름>:<ext4 UUID>`와 `model=<파티션 이름>:<ext4 UUID>` 두 줄을 빌드 시 받습니다. `scripts/flip4-native-volumes.sh`는 두 개의 일반 파일 ext4 이미지와 이 설정을 만듭니다. 실기 후보는 플립4 UFS 컨트롤러 아래의 지정된 파티션만 선택합니다. 모델을 읽기 전용으로 마운트하고, 작업 볼륨도 읽기 전용으로 먼저 열어 `.aios-work-volume`과 `note.txt`를 확인한 뒤에만 쓰기 모드로 다시 엽니다.
+
+```sh
+bash scripts/flip4-native-volumes.sh model-source.ext4 build/native-volumes sda2 sda1
+bash scripts/arm64-early-init.sh kernel build/native-init flip4-native-document build/native-volumes/volumes.conf display-root
+bash scripts/flip4-reference-image.sh --native-document recovery.img build/native-init/native-document-init.cpio.gz build/native-image
+```
+
+위 파티션 이름은 가상 테스트 배치의 예시입니다. 화면을 포함할 때 `display-root`는 ARM64 화면 실행기, 글꼴과 동적 라이브러리를 제공하는 루트입니다. 고정 복구 이미지의 DTBO 9에만 두 터치 노드의 `bringup=1`과 빈 펌웨어 이름을 기록하고, 병합 후 같은 설정인지 확인합니다. PID 1은 실제 적용된 트리와 펌웨어 검색 경로를 읽어 확인 조건을 만족할 때만 터치 모듈을 로드합니다. 터치 펌웨어 바이너리는 포함하지 않습니다. 실기 부트로더가 이 오버레이를 적용하는지와 터치 드라이버의 동작은 실제 장치에서 확인해야 합니다.
+
 ### 플립4 커널로 가상 메모장 실행
 
 **Flip4 reference kernel probe**의 `flip4-reference-unsigned` 묶음에는 `aios-flip4-document-reference-unsigned.img`가 있습니다. Android v2 컨테이너에서 꺼낸 커널과 AIOS 램디스크로 QEMU를 두 번 부팅합니다. 첫 부팅에서 별도 가상 디스크에 메모를 저장하고 이전 버전으로 보낸 요청이 거절되는지 확인합니다. 두 번째 부팅에서 저장한 본문과 해시를 대조합니다. 증거는 `document-proof.json`과 두 부팅 로그에 있습니다. 이 이미지의 플립4 실기 부팅은 검증이 남아 있습니다.

@@ -2,7 +2,7 @@
 # Assemble an unsigned reference image and boot its extracted payloads in QEMU.
 set -euo pipefail
 mode=${1:-}
-if [[ $mode == --driver-image || $mode == --board-image || $mode == --board-probe ]]; then
+if [[ $mode == --driver-image || $mode == --board-image || $mode == --board-probe || $mode == --native-document ]]; then
   reference=${2:?Pass the community recovery image}
   document_ramdisk=${3:?Pass the AIOS initramfs}
   out=${4:?Pass a new output directory}
@@ -54,6 +54,15 @@ assemble_driver_image() {
     cp "$stage/module-overlay/order-without-touch.txt" "$destination/order-without-touch.txt"
   fi
 }
+
+if [[ $mode == --native-document ]]; then
+  echo "2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  $reference" | sha256sum -c -
+  python3 scripts/flip4-touch-policy.py "$stage/reference/dtb" "$stage/reference/recovery_dtbo" \
+    "$stage/policy.dtbo" > "$out/touch-policy.json"
+  mv "$stage/policy.dtbo" "$stage/reference/recovery_dtbo"
+  assemble_driver_image "$out" "$out/layout.json" aios-flip4-native-document-unsigned.img --board-overlay
+  exit
+fi
 
 if [[ $mode == --board-probe ]]; then
   assemble_driver_image "$out" "$out/layout.json" aios-flip4-board-probe-unsigned.img --board-overlay

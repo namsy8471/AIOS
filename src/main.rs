@@ -6,6 +6,8 @@ mod document;
 #[cfg(target_os = "linux")]
 mod flip4_probe;
 #[cfg(target_os = "linux")]
+mod flip4_storage;
+#[cfg(target_os = "linux")]
 mod hardware;
 #[cfg(target_os = "linux")]
 mod pmsg;
@@ -81,6 +83,17 @@ fn main() -> io::Result<std::process::ExitCode> {
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-flip4-board-probe").is_file() {
         flip4_probe::run();
+    }
+    #[cfg(target_os = "linux")]
+    if std::process::id() == 1 && Path::new("/etc/aios-flip4-volumes").is_file() {
+        let result = flip4_storage::prepare()
+            .and_then(|model| document_console(Path::new("/work"), true, Some(model)));
+        if let Err(error) = result {
+            eprintln!("AIOS_FLIP4_DOCUMENT_UNAVAILABLE {error}");
+        }
+        loop {
+            unsafe { libc::pause() };
+        }
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-document-console").exists() {

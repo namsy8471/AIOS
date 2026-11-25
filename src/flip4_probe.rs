@@ -35,7 +35,7 @@ const FLIP4_NODES: [&str; 4] = [
     "soc/ufshc@1d84000",
 ];
 
-fn scope(tree: &Path) -> &'static str {
+pub(crate) fn scope(tree: &Path) -> &'static str {
     let compatible = fs::read(tree.join("compatible")).unwrap_or_default();
     let mut compatibles = compatible.split(|byte| *byte == 0);
     if compatibles

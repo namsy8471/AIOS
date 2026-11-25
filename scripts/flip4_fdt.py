@@ -13,7 +13,7 @@ def trees(image):
         offset = image.find(magic, offset + size)
 
 
-def nodes(tree):
+def nodes(tree, property_offsets=None):
     _, _, struct_offset, strings_offset, _, _, _, _, strings_size, struct_size = struct.unpack_from(">10I", tree)
     data = tree[struct_offset:struct_offset + struct_size]
     strings = tree[strings_offset:strings_offset + strings_size]
@@ -32,6 +32,9 @@ def nodes(tree):
             size, name_offset = struct.unpack_from(">II", data, offset)
             name = strings[name_offset:strings.index(0, name_offset)].decode()
             offset += 8
+            if property_offsets is not None:
+                path = "/".join(label for label, _ in parents)
+                property_offsets[path, name] = (struct_offset + offset, size)
             parents[-1][1][name] = data[offset:offset + size]
             offset = (offset + size + 3) & ~3
         elif token == 9:

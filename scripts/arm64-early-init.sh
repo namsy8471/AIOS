@@ -16,6 +16,23 @@ if [[ ${3:-} == flip4-board-probe ]]; then
   (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/board-probe-init.cpio.gz"
   exit
 fi
+if [[ ${3:-} == flip4-native-document ]]; then
+  volumes=${4:?Pass explicit work and model partition settings}
+  mkdir "$root/etc" "$root/proc" "$root/sys" "$root/work" "$root/model"
+  chmod 0755 "$root"
+  install -m 0644 "$volumes" "$root/etc/aios-flip4-volumes"
+  touch "$root/etc/aios-stream-worker"
+  mknod -m 666 "$root/dev/null" c 1 3
+  if [[ -n ${5:-} ]]; then
+    display_root=$5
+    test -x "$display_root/usr/bin/display-frame"
+    test -f "$display_root/usr/share/aios/NanumGothic-Regular.ttf"
+    cp -a "$display_root/usr" "$root/"
+    if [[ -d $display_root/lib ]]; then cp -a "$display_root/lib" "$root/"; fi
+  fi
+  (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) | gzip > "$out/native-document-init.cpio.gz"
+  exit
+fi
 touch "$root/aios-boot-probe"
 if [[ ${3:-} == pstore ]]; then
   mkdir "$root/sys" "$root/pstore"
