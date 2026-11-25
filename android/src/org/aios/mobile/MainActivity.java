@@ -37,6 +37,9 @@ import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     private String remoteRequest;
+    private static final java.util.regex.Pattern CAPABILITIES = java.util.regex.Pattern.compile(
+        "(?:뭐(?:를)?|뭘|무엇(?:을)?|어떤\\s*일(?:을)?)\\s*(?:해\\s*줄|할)\\s*수|(?:가능한|할\\s*수\\s*있는)\\s*(?:일|기능)|너의?\\s*기능|what can you do",
+        java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final int PICK_MODEL = 1;
     private static final int PICK_NOTES = 2;
     private static final int PICK_PC = 3;
@@ -285,7 +288,11 @@ public class MainActivity extends Activity {
             .hideSoftInputFromWindow(instruction.getWindowToken(), 0);
         PhoneControls.Command setting = PhoneControls.parse(text);
         String query = AgentAction.searchQuery(text);
-        if (setting != null) {
+        if (CAPABILITIES.matcher(text).find()) {
+            appendMessage("저는 TLA예요. 질문에 답하고, 휴대폰에서 앱을 열거나 Google 검색을 열고, 메모·타이머를 다룰 수 있어요. "
+                + "화면에서 읽을 수 있는 버튼은 찾아서 여러 단계로 이어갈 수 있어요. 결제처럼 확인이 필요한 동작은 PC에 알려요. "
+                + "예를 들어 ‘구글에서 네이버 검색해줘’나 ‘설정 열어줘’라고 부탁해 보세요.", false);
+        } else if (setting != null) {
             phoneControls.review(setting);
         } else if (PhoneIntents.handle(this, text, result -> appendMessage(result, false))) {
             return;
@@ -302,7 +309,7 @@ public class MainActivity extends Activity {
                 || AgentActivity.handleScreenTask(this, text, requestId, this::replyToAppTask)) {
             return;
         } else {
-            planChatCommand(text, requestId != null);
+            planChatCommand(text, requestId);
         }
     }
 
@@ -310,29 +317,45 @@ public class MainActivity extends Activity {
         if (!isFinishing() && !isDestroyed()) appendMessage(result, false);
     }
 
-    private void planChatCommand(String text, boolean fromPc) {
-        boolean larger = modelChoice.getSelectedItemPosition() == 1;
+    private void planChatCommand(String text, String requestId) {
+        boolean larger = engine.weights(true).isFile();
         if (!engine.weights(larger).isFile()) {
             clarifyChatCommand(text);
             return;
         }
+        int keepScreen = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+        if (requestId != null) getWindow().addFlags(keepScreen);
         run("로컬 모델로 이 요청을 처리할 방법을 찾는 중", () -> {
             try { return engine.planCommand(text, larger); }
-            catch (Exception invalid) { return new JSONObject(); }
+            catch (Exception invalid) {
+                android.util.Log.w("TLAIntent", "Intent inference failed: " + (invalid instanceof IOException
+                    ? invalid.getMessage() : invalid.getClass().getSimpleName()));
+                return null;
+            }
         }, plan -> {
+            if (requestId != null) getWindow().clearFlags(keepScreen);
             status.setText("");
             Consumer<String> reply = result -> appendMessage(result, false);
+            if (plan == null) {
+                reply.accept("로컬 모델 응답을 읽지 못했어요. 다시 보내 주세요.");
+                return;
+            }
             String app = planArgument(plan, "app", text);
             String label = planArgument(plan, "label", text);
+            String answer = plan.opt("text") instanceof String ? plan.optString("text").strip() : "";
             String tool = plan.optString("tool");
             if ("open".equals(tool) && app != null && plan.length() == 2) {
-                AgentActivity.offerChatApp(this, app, null, true, reply);
+                AgentActivity.offerChatApp(this, app, null, requestId == null, reply);
             } else if ("click".equals(tool) && app != null && label != null && plan.length() == 3) {
                 AgentActivity.offerChatApp(this, app, label, true, reply);
             } else if ("install".equals(tool) && app != null && plan.length() == 2) {
                 PhoneIntents.offerInstall(this, app, reply);
             } else if ("search".equals(tool) && label != null && plan.length() == 2) {
-                AgentActivity.search(this, label, fromPc, reply);
+                AgentActivity.search(this, label, requestId != null, reply);
+            } else if ("answer".equals(tool) && !answer.isEmpty() && answer.length() <= 1200 && plan.length() == 2) {
+                reply.accept(answer);
+            } else if ("screen".equals(tool) && app != null && plan.length() == 2) {
+                AgentActivity.offerScreenTask(this, app, text, requestId, reply);
             } else {
                 clarifyChatCommand(text);
             }

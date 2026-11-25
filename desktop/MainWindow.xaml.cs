@@ -110,7 +110,6 @@ public partial class MainWindow : Window
     private async Task WatchReceipt(string target, string id)
     {
         DateTime deadline = DateTime.UtcNow.AddMinutes(3);
-        bool accepted = false;
         try
         {
             while (DateTime.UtcNow < deadline)
@@ -121,11 +120,6 @@ public partial class MainWindow : Window
                 {
                     AddPhoneMessage("휴대폰 · " + receipt.Reply);
                     return;
-                }
-                if (!accepted && receipt?.State == "accepted")
-                {
-                    accepted = true;
-                    AddPhoneMessage("휴대폰 · " + receipt.Reply);
                 }
                 await Task.Delay(1500);
             }

@@ -187,17 +187,26 @@ final class MobileEngine {
 
     JSONObject planCommand(String instruction, boolean larger) throws Exception {
         validateMemoInstruction(instruction);
-        String system = "Choose one phone tool for the Korean user's goal. JSON only. Copy app and label exactly from the user. "
-            + "Tools: open(app), click(app,label), install(app), search(label), clarify(). "
-            + "띄워, 보여줘, 켜줘 mean open. 설치, 다운로드, 깔아 mean install. 눌러 means click. "
-            + "Use clarify if required details are missing or the tools cannot do it. Never invent a button.\n"
+        String system = "You are TLA, a Korean local Android assistant. Decide what the user intends. Return one JSON object. "
+            + "For an informational question or explanation, use answer(text), in Korean. For a request to act now, select "
+            + "open(app), click(app,label), install(app), search(label), or screen(app) for a task inside a named app. "
+            + "A polite request can end in a question mark. Use clarify when an action lacks essential details. "
+            + "Copy app and label exactly from the user. Never claim you executed an action or inspected the phone in an answer.\n"
+            + "HTTP와 HTTPS의 차이가 뭐야? -> {\"tool\":\"answer\",\"text\":\"HTTPS는 TLS로 데이터를 암호화해요.\"}\n"
+            + "설정 좀 띄워 줄 수 있어? -> {\"tool\":\"open\",\"app\":\"설정\"}\n"
             + "계산기를 쓸 수 있게 띄워줘 -> {\"tool\":\"open\",\"app\":\"계산기\"}\n"
-            + "갤러리 좀 띄워 줘 -> {\"tool\":\"open\",\"app\":\"갤러리\"}\n"
             + "Spotify를 설치해 줘 -> {\"tool\":\"install\",\"app\":\"Spotify\"}\n"
             + "게임 출석 좀 챙겨줘 -> {\"tool\":\"clarify\"}\n"
+            + "마스터 듀얼 출석을 대신 챙길래? -> {\"tool\":\"screen\",\"app\":\"마스터 듀얼\"}\n"
             + "작업 앱에 있는 출석 체크를 대신 눌러 줘 -> {\"tool\":\"click\",\"app\":\"작업 앱\",\"label\":\"출석 체크\"}\n"
             + "서울 날씨 인터넷으로 알아봐 -> {\"tool\":\"search\",\"label\":\"서울 날씨\"}";
-        return inferJson(instruction, larger, system, 96);
+        String output = inferText(instruction, larger, system, 160);
+        if (output.startsWith("```json") && output.endsWith("```")) {
+            output = output.substring(7, output.length() - 3).strip();
+        }
+        if (output.startsWith("{")) return new JSONObject(output);
+        if (output.isBlank() || output.startsWith("```") || output.contains("<|")) throw new IOException("모델 응답 형식이 올바르지 않아요.");
+        return new JSONObject().put("tool", "answer").put("text", output);
     }
 
     JSONObject chooseScreenStep(String goal, AgentAction.ScreenState screen, boolean larger) throws Exception {
@@ -227,6 +236,10 @@ final class MobileEngine {
     }
 
     private JSONObject inferJson(String instruction, boolean larger, String system, int tokens) throws Exception {
+        return new JSONObject(inferText(instruction, larger, system, tokens));
+    }
+
+    private String inferText(String instruction, boolean larger, String system, int tokens) throws Exception {
         File weights = weights(larger);
         if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
         String prompt = "<|im_start|>system\n" + system + "<|im_end|>\n<|im_start|>user\n"
@@ -246,8 +259,14 @@ final class MobileEngine {
             try (InputStream input = new java.io.FileInputStream(output)) {
                 generated = new String(readLimited(input, 16384), StandardCharsets.UTF_8);
             }
-            if (generated.startsWith(prompt)) generated = generated.substring(prompt.length());
-            return new JSONObject(generated.trim());
+            if (generated.startsWith(prompt)) {
+                generated = generated.substring(prompt.length());
+            } else {
+                String marker = "<|im_start|>assistant\n";
+                int boundary = generated.indexOf(marker);
+                if (boundary >= 0) generated = generated.substring(boundary + marker.length());
+            }
+            return generated.trim();
         } finally {
             if (process != null && process.isAlive()) process.destroyForcibly();
             output.delete();

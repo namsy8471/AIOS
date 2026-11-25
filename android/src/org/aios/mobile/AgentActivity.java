@@ -30,9 +30,10 @@ public final class AgentActivity extends Activity {
         "^(.+?)\\s*에서\\s+(.+?)(?:\\s+버튼)?(?:을|를)?\\s+(?:눌러|클릭)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
     private static final Pattern CHAT_OPEN = Pattern.compile(
         "^(.+?)(?:\\s+앱(?:을)?)?\\s+(?:열어|실행)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
-    private static final Pattern CHAT_TASK = Pattern.compile("^(.+?)\\s*에서\\s+(.+)$");
+    private static final Pattern CHAT_TASK = Pattern.compile(
+        "^(.+?)\\s*에서\\s+(.+(?:받아|챙겨|체크|진행|찾아)\\s*(?:해\\s*)?(?:줘|주세요)[.!]*)$");
     private static final Pattern MASTER_DUEL_TASK = Pattern.compile(
-        "^((?:유희왕\\s*)?마스터\\s*듀얼)\\s+(?=(?:일일\\s*)?(?:출석|출첵))(.+)$");
+        "^((?:유희왕\\s*)?마스터\\s*듀얼)\\s+((?:일일\\s*)?(?:출석|출첵).*(?:줘|주세요)[.!]*)$");
     private WorkspaceUi ui;
     private LinearLayout content;
     private TextView status;
@@ -228,8 +229,12 @@ public final class AgentActivity extends Activity {
             request = MASTER_DUEL_TASK.matcher(command);
             if (!request.matches()) return false;
         }
-        String goal = request.group(2);
-        resolveChatApp(activity, request.group(1), false, false, choice -> {
+        offerScreenTask(activity, request.group(1), request.group(2), requestId, reply);
+        return true;
+    }
+
+    static void offerScreenTask(Activity activity, String app, String goal, String requestId, Consumer<String> reply) {
+        resolveChatApp(activity, app, false, false, choice -> {
             if (!requireAccessibility(activity, reply)) return;
             boolean visual = ScreenVision.supports(choice.packageName, goal);
             ScreenVision vision = new ScreenVision(activity);
@@ -267,7 +272,6 @@ public final class AgentActivity extends Activity {
                 .setNegativeButton("취소", null)
                 .setPositiveButton("화면 확인", (dialog, which) -> inspect.run()).show();
         }, reply);
-        return true;
     }
 
     private static void resolveChatApp(Activity activity, String name, boolean confirmExact, boolean opens,
