@@ -124,6 +124,8 @@ bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.c
 
 Windows에서 `flip4-board-diagnostics` 아티팩트를 풀고 `scripts/flip4-diagnostic-preflight.ps1 -Bundle <폴더>`를 실행하면 진단 이미지의 해시를 QEMU 기록과 대조합니다. USB로 연결한 SM-F721N에서 보드 식별값, 부트로더 잠금 상태, 복구 파티션 용량을 읽어 함께 보고합니다. 이 점검은 휴대폰에 데이터를 쓰지 않으며 실기 부팅 여부는 별도로 확인합니다.
 
+진단 이미지가 CAPE 보드에서 시작되면 USB CDC ACM 직렬 포트로도 보드 보고서를 보냅니다. PC가 연결되면 `AIOS_FLIP4_SNAPSHOT`으로 시작하는 JSON을 받을 수 있습니다. QEMU 시험은 가상 USB 컨트롤러를 연결하고 반대쪽 직렬 포트에 같은 바이트가 도착하는지 확인합니다. 실제 플립4의 USB 포트 동작은 실기 부팅 때 확인합니다. [Linux USB 직렬 드라이버](https://docs.kernel.org/usb/gadget_serial.html)
+
 두 펌웨어 이름은 공개 커뮤니티 B4Q 파일과 일치합니다. STM 터치용 `fst2ca78y_b4.bin`의 SHA-256은 `6a72cf52fba1b156008fa384eb2e8c8db44321d593a6c97b0e3cacdc6a6c00cb`이고, 커버 터치용 `ztw522_b4.bin`은 `c6aa076fe2741b2cadf975abdf8e40d22e8776b0385aebc0d077d0ca618482ae`입니다. 실물 펌웨어와의 호환성은 확인이 필요하며 두 파일은 AIOS 진단 이미지에 포함되지 않습니다. [STM 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_stm/fst2ca78y_b4.bin) · [Zinitix 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_zinitix/ztw522_b4.bin)
 
 ### 플립4 네이티브 문서 후보

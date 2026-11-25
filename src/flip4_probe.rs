@@ -1,5 +1,5 @@
 //! Diskless PID 1 for the unsigned Flip4 board diagnostics ramdisk.
-use crate::{hardware, mount_virtual_fs, pmsg};
+use crate::{flip4_usb, hardware, mount_virtual_fs, pmsg};
 use serde_json::json;
 use std::{fs, io, io::Write, path::Path, process::Command};
 
@@ -132,6 +132,10 @@ fn probe() -> io::Result<Option<libc::c_int>> {
         && cmdline
             .split_ascii_whitespace()
             .any(|arg| arg == "aios.qemu_flip4_pstore=1");
+    let qemu_usb = scope == "qemu_virt"
+        && cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "aios.qemu_flip4_usb=1");
     if qemu_pstore {
         if let Some(previous) = read_previous()? {
             emit("RECOVERED", previous);
@@ -164,9 +168,8 @@ fn probe() -> io::Result<Option<libc::c_int>> {
     let devices = hardware::device_numbers()?;
     emit("DISPLAY", display.clone());
     emit("DEVICES", devices.clone());
+    let snapshot = json!({"board":board, "modules":modules, "display":display, "devices":devices});
     if qemu_pstore || scope == "cape_flip4_candidate" {
-        let snapshot =
-            json!({"board":board, "modules":modules, "display":display, "devices":devices});
         let result = persist(&snapshot);
         emit(
             "PSTORE",
@@ -177,9 +180,17 @@ fn probe() -> io::Result<Option<libc::c_int>> {
             return Ok(Some(libc::RB_AUTOBOOT));
         }
     }
+    let usb_report = format!("{SNAPSHOT_PREFIX}{snapshot}\n");
+    if qemu_usb {
+        flip4_usb::verify_dummy(&usb_report)?;
+        emit("USB", json!({"transport":"dummy_cdc_acm", "received":true}));
+    }
     emit("DONE", json!({"scope":scope}));
+    if scope == "cape_flip4_candidate" {
+        flip4_usb::broadcast(&usb_report)?;
+    }
     // A physical diagnostic keeps PID 1 resident.
-    Ok((qemu_opt_in && scope == "qemu_virt").then_some(libc::RB_POWER_OFF))
+    Ok((scope == "qemu_virt" && (qemu_opt_in || qemu_usb)).then_some(libc::RB_POWER_OFF))
 }
 
 pub fn run() -> ! {

@@ -8,6 +8,8 @@ mod flip4_probe;
 #[cfg(target_os = "linux")]
 mod flip4_storage;
 #[cfg(target_os = "linux")]
+mod flip4_usb;
+#[cfg(target_os = "linux")]
 mod hardware;
 #[cfg(target_os = "linux")]
 mod pmsg;

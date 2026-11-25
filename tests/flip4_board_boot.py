@@ -7,16 +7,17 @@ import re
 import subprocess
 
 
-def boot(directory, load_drivers, without_touch=False):
+def boot(directory, load_drivers, without_touch=False, usb=False):
     args = [
         "qemu-system-aarch64", "-machine", "virt,gic-version=3", "-cpu", "max", "-m", "1024M",
         "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot",
         "-kernel", directory / "payload/kernel", "-initrd", directory / "payload/ramdisk",
         "-append", "earlycon=pl011,0x9000000 console=ttyAMA0 rdinit=/init panic=1"
         + (" aios.qemu_flip4_probe=1" if load_drivers else "")
-        + (" aios.qemu_flip4_without_touch=1" if without_touch else ""),
+        + (" aios.qemu_flip4_without_touch=1" if without_touch else "")
+        + (" aios.qemu_flip4_usb=1" if usb else ""),
     ]
-    profile = "without-touch" if without_touch else "drivers" if load_drivers else "default"
+    profile = "usb" if usb else "without-touch" if without_touch else "drivers" if load_drivers else "default"
     log_path = directory / f"console-{profile}.log"
     records = {}
     module_results = []
@@ -32,12 +33,17 @@ def boot(directory, load_drivers, without_touch=False):
                 if line.startswith("AIOS_FLIP4_"):
                     name, value = line.split(" ", 1)
                     records[name.removeprefix("AIOS_FLIP4_")] = json.loads(value)
+                    if name == "AIOS_FLIP4_ERROR":
+                        raise AssertionError(f"{profile} diagnostic failed: {records['ERROR']}")
                 if line.startswith("AIOS_FLIP4_DONE "):
                     break
             assert "ERROR" not in records and records["DONE"]["scope"] == "qemu_virt", records
             assert records["BOARD"]["scope"] == "qemu_virt"
             assert set(records["DEVICES"]) == {"drm", "input", "block"}
             assert "drm_connectors" in records["DISPLAY"]
+            if usb:
+                assert records["USB"] == {"transport": "dummy_cdc_acm", "received": True}, records
+                assert vm.wait(timeout=15) == 0
             if load_drivers:
                 assert records["MODULES"] == {
                     "attempted": True, "exit_code": 0, "error": None,
@@ -122,6 +128,7 @@ def main():
         "default": boot(directory, load_drivers=False),
         "driver_opt_in": boot(directory, load_drivers=True),
         "driver_without_touch": boot(directory, load_drivers=True, without_touch=True),
+        "usb_diagnostic": boot(directory, load_drivers=False, usb=True),
         "pstore_after_reboot": pstore_reboot(directory),
     }, indent=2))
 
