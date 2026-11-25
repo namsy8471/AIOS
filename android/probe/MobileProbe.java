@@ -32,6 +32,8 @@ public final class MobileProbe extends Instrumentation {
             JSONObject report = new JSONObject().put("mode", mode);
             if ("memo-latency".equals(mode)) {
                 report = MemoLatencyProbe.run(this, app);
+            } else if ("production-memo".equals(mode)) {
+                report = ProductionMemoProbe.run(this, app);
             } else if ("direct".equals(mode)) {
                 checkDirectMemo(engine, report);
             } else if ("local".equals(mode) || "large".equals(mode)) {

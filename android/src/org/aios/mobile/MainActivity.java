@@ -5,11 +5,15 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Insets;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.View;
 import android.view.WindowInsets;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -31,7 +35,7 @@ import java.util.function.Consumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public final class MainActivity extends Activity {
+public class MainActivity extends Activity {
     private static final int PICK_MODEL = 1;
     private static final int PICK_NOTES = 2;
     private static final int PICK_PC = 3;
@@ -47,13 +51,18 @@ public final class MainActivity extends Activity {
     private TextView pcStatus;
     private Spinner modelChoice;
     private Spinner pcModelChoice;
+    private LinearLayout memoPreview;
+    private TextView memoAddition;
+    private String memoRevision;
+    private MemoProposal pendingMemo;
+    private int memoRequest;
     private PcPairing pc;
     private JSONArray selected = new JSONArray();
     private MobileEngine engine;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        engine = new MobileEngine(this);
+        engine = createEngine();
         ScrollView page = new ScrollView(this);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -67,6 +76,16 @@ public final class MainActivity extends Activity {
 
         label("AIOS", 28);
         instruction = input("예: 메모에 우유 추가", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        instruction.setTag("memo-instruction");
+        instruction.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                memoRequest++;
+                if (pendingMemo != null) status.setText("지시가 바뀌었습니다.");
+                clearMemoPreview();
+            }
+            @Override public void afterTextChanged(Editable text) {}
+        });
         status = label(engine.weights(false).isFile() ? "로컬 모델 준비됨" : "로컬 모델을 가져오세요.", 15);
         label("이 휴대폰의 메모", 20);
         memo = label("", 16);
@@ -78,7 +97,8 @@ public final class MainActivity extends Activity {
         content.addView(modelChoice);
         button("선택한 로컬 모델 가져오기", () ->
             pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
-        button("메모 변경 미리 보기", this::previewMemo);
+        button(content, "메모 변경 미리 보기", this::previewMemo).setTag("memo-preview-button");
+        buildMemoPreview();
         label("Windows PC에 작업 보내기", 20);
         pcStatus = label("연결한 PC 없음", 15);
         button("PC 페어링 파일 가져오기", () -> pick(PICK_PC, "*/*", false));
@@ -103,14 +123,20 @@ public final class MainActivity extends Activity {
         refresh();
     }
 
+    MobileEngine createEngine() { return new MobileEngine(this); }
+
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 
     private TextView label(String text, int size) {
+        return label(content, text, size);
+    }
+
+    private TextView label(LinearLayout parent, String text, int size) {
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextSize(size);
         view.setPadding(0, dp(7), 0, dp(7));
-        content.addView(view);
+        parent.addView(view);
         return view;
     }
 
@@ -123,17 +149,41 @@ public final class MainActivity extends Activity {
     }
 
     private void button(String text, Runnable action) {
+        button(content, text, action);
+    }
+
+    private Button button(LinearLayout parent, String text, Runnable action) {
         Button view = new Button(this);
         view.setAllCaps(false);
         view.setText(text);
         view.setOnClickListener(clicked -> action.run());
-        content.addView(view);
+        parent.addView(view);
         controls.add(view);
+        return view;
+    }
+
+    private void buildMemoPreview() {
+        memoPreview = new LinearLayout(this);
+        memoPreview.setOrientation(LinearLayout.VERTICAL);
+        memoPreview.setVisibility(View.GONE);
+        label(memoPreview, "메모에 추가할 내용", 18);
+        memoAddition = label(memoPreview, "", 16);
+        memoAddition.setTag("memo-preview-text");
+        LinearLayout actions = new LinearLayout(this);
+        button(actions, "취소", () -> {
+            clearMemoPreview();
+            status.setText("메모 변경 취소");
+        }).setTag("memo-preview-cancel");
+        button(actions, "저장", this::approveMemo).setTag("memo-preview-save");
+        memoPreview.addView(actions);
+        content.addView(memoPreview);
     }
 
     private void refresh() {
         try {
-            memo.setText(engine.memoText());
+            String text = engine.memoText();
+            memoRevision = MobileEngine.sha(text);
+            memo.setText(text);
             draft.setText(engine.draftText());
         } catch (IOException error) {
             status.setText("저장된 문서를 읽을 수 없습니다.");
@@ -165,17 +215,68 @@ public final class MainActivity extends Activity {
         String text = instruction.getText().toString();
         boolean larger = modelChoice.getSelectedItemPosition() == 1;
         long start = SystemClock.elapsedRealtime();
-        run("메모 미리 보기 준비 중", () -> new String[] {MobileEngine.sha(engine.memoText()), engine.proposeLine(text, larger)}, proposal -> {
-            status.setText("미리 보기 · " + (SystemClock.elapsedRealtime() - start) + " ms");
-            new AlertDialog.Builder(this).setTitle("메모에 추가할 내용").setMessage(proposal[1])
-                .setNegativeButton("취소", null).setPositiveButton("저장", (dialog, action) -> {
-                    long save = SystemClock.elapsedRealtime();
-                    run("메모 저장 중", () -> { engine.saveMemo(proposal[0], proposal[1]); return null; }, ignored -> {
-                        refresh();
-                        status.setText("메모 저장 완료 · " + (SystemClock.elapsedRealtime() - save) + " ms");
-                    });
-                }).show();
+        int request = ++memoRequest;
+        clearMemoPreview();
+        String direct;
+        try {
+            direct = MobileEngine.directMemoLine(text);
+        } catch (IOException error) {
+            status.setText(error.getMessage());
+            return;
+        }
+        if (direct != null && memoRevision != null) {
+            showMemoPreview(new MemoProposal(memoRevision, direct), start);
+            return;
+        }
+        run("메모 미리 보기 준비 중", () -> {
+            String original = engine.memoText();
+            String addition = direct == null ? engine.inferMemoLine(text, larger) : direct;
+            return new String[] {original, addition, MobileEngine.sha(original)};
+        }, result -> {
+            memo.setText(result[0]);
+            memoRevision = result[2];
+            if (request == memoRequest) showMemoPreview(new MemoProposal(result[2], result[1]), start);
+            else status.setText("지시가 바뀌었습니다. 다시 미리 보기를 눌러 주세요.");
         });
+    }
+
+    private void showMemoPreview(MemoProposal proposal, long start) {
+        pendingMemo = proposal;
+        memoAddition.setText(proposal.addition);
+        memoPreview.setVisibility(View.VISIBLE);
+        status.setText("미리 보기 · " + (SystemClock.elapsedRealtime() - start) + " ms");
+        memoPreview.post(() -> {
+            if (pendingMemo == proposal) {
+                memoPreview.requestRectangleOnScreen(new Rect(0, 0, memoPreview.getWidth(), memoPreview.getHeight()), true);
+            }
+        });
+    }
+
+    private void clearMemoPreview() {
+        pendingMemo = null;
+        if (memoPreview != null) memoPreview.setVisibility(View.GONE);
+    }
+
+    private void approveMemo() {
+        MemoProposal proposal = pendingMemo;
+        if (proposal == null) return;
+        clearMemoPreview();
+        memoRevision = null;
+        long save = SystemClock.elapsedRealtime();
+        run("메모 저장 중", () -> { engine.saveMemo(proposal.revision, proposal.addition); return null; }, ignored -> {
+            refresh();
+            status.setText("메모 저장 완료 · " + (SystemClock.elapsedRealtime() - save) + " ms");
+        });
+    }
+
+    private static final class MemoProposal {
+        final String revision;
+        final String addition;
+
+        MemoProposal(String revision, String addition) {
+            this.revision = revision;
+            this.addition = addition;
+        }
     }
 
     private void confirmDraftRequest() {

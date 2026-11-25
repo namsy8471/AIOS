@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import javax.net.ssl.HttpsURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -72,8 +73,13 @@ final class MobileEngine {
         }
     }
 
-    static String sha(String text) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+    static String sha(String text) {
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException error) {
+            throw new IllegalStateException("Android must support SHA-256", error);
+        }
         StringBuilder hex = new StringBuilder(64);
         for (byte b : digest) hex.append(Character.forDigit((b >>> 4) & 15, 16)).append(Character.forDigit(b & 15, 16));
         return hex.toString();

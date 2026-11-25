@@ -123,7 +123,7 @@ final class MemoLatencyProbe {
         throw new AssertionError("Test activity did not receive focus");
     }
 
-    private static void inject(Instrumentation probe, long down, long eventTime, int action, int[] point) {
+    static void inject(Instrumentation probe, long down, long eventTime, int action, int[] point) {
         MotionEvent event = MotionEvent.obtain(down, eventTime, action, point[0], point[1], 0);
         try {
             event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
