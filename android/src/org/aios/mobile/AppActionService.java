@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import org.json.JSONObject;
 
 public final class AppActionService extends AccessibilityService {
@@ -34,6 +35,10 @@ public final class AppActionService extends AccessibilityService {
     private static final long TIMEOUT_MS = 15_000;
     private static final long APPROVAL_MS = 45_000;
     private static final int MAX_SCREEN_ACTIONS = 6;
+    private static final Pattern REVIEW_ACTION = Pattern.compile(
+        "결제|구매|송금|구독|유료|삭제|초기화|탈퇴|로그아웃|약관|동의|전송|게시|공유|비밀번호|카드번호|인증번호|\\p{Sc}|"
+            + "\\b(pay|purchase|buy|subscribe|transfer|delete|erase|reset|agree|terms|send|post|share|logout|password|verification code)\\b",
+        Pattern.CASE_INSENSITIVE);
     private static volatile AppActionService connected;
     private static volatile String status = "";
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -56,6 +61,7 @@ public final class AppActionService extends AccessibilityService {
     private static final class ScreenTask {
         final String packageName;
         final String goal;
+        final String requestId;
         final boolean larger;
         final Consumer<String> reply;
         final boolean visual;
@@ -69,11 +75,13 @@ public final class AppActionService extends AccessibilityService {
         int[] titleFrame;
         boolean visualStarted;
         boolean titleTapped;
+        int reviewVersion;
 
-        ScreenTask(String packageName, String goal, boolean larger, Consumer<String> reply) {
+        ScreenTask(String packageName, String goal, boolean larger, String requestId, Consumer<String> reply) {
             this.packageName = packageName;
             this.goal = goal;
             this.larger = larger;
+            this.requestId = requestId;
             this.reply = reply;
             visual = ScreenVision.supports(packageName, goal);
         }
@@ -90,8 +98,8 @@ public final class AppActionService extends AccessibilityService {
         return connected != null && connected.arm(actions);
     }
 
-    static boolean inspect(String packageName, String goal, boolean larger, Consumer<String> reply) {
-        return connected != null && connected.startInspection(new ScreenTask(packageName, goal, larger, reply));
+    static boolean inspect(String packageName, String goal, boolean larger, String requestId, Consumer<String> reply) {
+        return connected != null && connected.startInspection(new ScreenTask(packageName, goal, larger, requestId, reply));
     }
 
     static void stop(String reason) {
@@ -234,6 +242,7 @@ public final class AppActionService extends AccessibilityService {
         setPackageFilter(getPackageName());
         if (finished != null) {
             if (finished.inference != null) finished.inference.cancel(true);
+            if (finished.requestId != null) RemoteResults.update(finished.requestId, "reply", message);
             finished.reply.accept(message);
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         }
@@ -360,8 +369,7 @@ public final class AppActionService extends AccessibilityService {
             task.titleFrame = appearance;
             ends = SystemClock.uptimeMillis() + APPROVAL_MS;
             stopOverlay.setText("TLA 중지");
-            continueOverlay.setText("타이틀 화면 누르기");
-            continueOverlay.setVisibility(View.VISIBLE);
+            offerScreenApproval(task, "타이틀 화면 누르기");
         } else {
             finishAction(task.titleTapped ? "타이틀을 한 번 눌렀어요. 다음 화면에서 출석 완료를 확인하지 못했어요."
                 : "화면에서 출석으로 이어지는 동작을 확인하지 못했어요.");
@@ -472,9 +480,36 @@ public final class AppActionService extends AccessibilityService {
         }
         ends = SystemClock.uptimeMillis() + APPROVAL_MS;
         stopOverlay.setText("TLA 중지");
-        continueOverlay.setText(proposal);
         continueOverlay.setAllCaps(false);
+        offerScreenApproval(task, proposal);
+    }
+
+    private void offerScreenApproval(ScreenTask task, String proposal) {
+        if (task.requestId != null && !requiresReview(task, proposal)) {
+            applyScreenProposal();
+            return;
+        }
+        continueOverlay.setText(proposal);
         continueOverlay.setVisibility(View.VISIBLE);
+        if (task.requestId == null) return;
+        int version = ++task.reviewVersion;
+        String context = task.snapshot == null ? "" : task.snapshot.text.stream()
+            .filter(text -> REVIEW_ACTION.matcher(text).find()).limit(3).collect(java.util.stream.Collectors.joining("\n"));
+        RemoteResults.offer(task.requestId, context.isEmpty() ? proposal : proposal + "\n" + context, approve -> {
+            if (screenTask != task || task.reviewVersion != version) return;
+            if (SystemClock.uptimeMillis() >= ends) {
+                finishAction("동작 승인 시간이 끝났어요.");
+            } else if (approve) {
+                applyScreenProposal();
+            } else {
+                finishAction("PC에서 작업을 중지했어요.");
+            }
+        });
+    }
+
+    private static boolean requiresReview(ScreenTask task, String proposal) {
+        if (REVIEW_ACTION.matcher(task.goal).find() || REVIEW_ACTION.matcher(proposal).find()) return true;
+        return task.snapshot != null && task.snapshot.text.stream().anyMatch(text -> REVIEW_ACTION.matcher(text).find());
     }
 
     private AgentAction.ScreenState matchingScreen(ScreenTask task) {
@@ -503,6 +538,8 @@ public final class AppActionService extends AccessibilityService {
 
     private void applyScreenProposal() {
         ScreenTask task = screenTask;
+        task.reviewVersion++;
+        if (task.requestId != null) RemoteResults.update(task.requestId, "accepted", "다음 화면을 확인하고 있어요.");
         if (task.visual) {
             applyVisualProposal(task);
             return;

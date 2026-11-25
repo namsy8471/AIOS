@@ -290,7 +290,7 @@ public class MainActivity extends Activity {
         } else if (PhoneIntents.handle(this, text, result -> appendMessage(result, false))) {
             return;
         } else if (query != null) {
-            AgentActivity.confirmSearch(this, query, result -> appendMessage(result, false));
+            AgentActivity.search(this, query, requestId != null, result -> appendMessage(result, false));
         } else if (text.equals("메모 보기") || text.equals("메모 보여줘")) {
             String stored = memo.getText().toString();
             appendMessage(stored.isEmpty() ? "저장된 메모가 없습니다." : stored, false);
@@ -299,10 +299,10 @@ public class MainActivity extends Activity {
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
         } else if (AgentActivity.handleChatApp(this, text, this::replyToAppTask)
-                || AgentActivity.handleScreenTask(this, text, requestId != null, this::replyToAppTask)) {
+                || AgentActivity.handleScreenTask(this, text, requestId, this::replyToAppTask)) {
             return;
         } else {
-            planChatCommand(text);
+            planChatCommand(text, requestId != null);
         }
     }
 
@@ -310,7 +310,7 @@ public class MainActivity extends Activity {
         if (!isFinishing() && !isDestroyed()) appendMessage(result, false);
     }
 
-    private void planChatCommand(String text) {
+    private void planChatCommand(String text, boolean fromPc) {
         boolean larger = modelChoice.getSelectedItemPosition() == 1;
         if (!engine.weights(larger).isFile()) {
             clarifyChatCommand(text);
@@ -332,7 +332,7 @@ public class MainActivity extends Activity {
             } else if ("install".equals(tool) && app != null && plan.length() == 2) {
                 PhoneIntents.offerInstall(this, app, reply);
             } else if ("search".equals(tool) && label != null && plan.length() == 2) {
-                AgentActivity.confirmSearch(this, label, reply);
+                AgentActivity.search(this, label, fromPc, reply);
             } else {
                 clarifyChatCommand(text);
             }

@@ -107,20 +107,29 @@ public final class AgentActivity extends Activity {
     }
 
     static void confirmSearch(Activity activity, String query, Consumer<String> result) {
+        search(activity, query, false, result);
+    }
+
+    static void search(Activity activity, String query, boolean direct, Consumer<String> result) {
         try {
             String text = AgentAction.field(query, 256);
             Intent search = AgentAction.search(text);
+            Runnable launch = () -> {
+                try {
+                    activity.startActivity(search);
+                    result.accept("브라우저에서 검색을 열었어요.");
+                } catch (ActivityNotFoundException | SecurityException error) {
+                    result.accept("검색을 열 수 있는 브라우저를 찾지 못했어요.");
+                }
+            };
+            if (direct) {
+                launch.run();
+                return;
+            }
             new AlertDialog.Builder(activity).setTitle("Google에서 검색")
                 .setMessage("Google에 보낼 검색어\n\n" + text)
                 .setNegativeButton("취소", (dialog, which) -> result.accept("검색을 취소했어요."))
-                .setPositiveButton("검색", (dialog, which) -> {
-                    try {
-                        activity.startActivity(search);
-                        result.accept("브라우저에서 검색을 열었어요.");
-                    } catch (ActivityNotFoundException | SecurityException error) {
-                        result.accept("검색을 열 수 있는 브라우저를 찾지 못했어요.");
-                    }
-                }).show();
+                .setPositiveButton("검색", (dialog, which) -> launch.run()).show();
         } catch (IllegalArgumentException error) {
             result.accept(error.getMessage());
         }
@@ -213,7 +222,7 @@ public final class AgentActivity extends Activity {
             choice -> runChatApp(activity, choice, actionLabel, reply), reply);
     }
 
-    static boolean handleScreenTask(Activity activity, String command, boolean inspectImmediately, Consumer<String> reply) {
+    static boolean handleScreenTask(Activity activity, String command, String requestId, Consumer<String> reply) {
         Matcher request = CHAT_TASK.matcher(command);
         if (!request.matches()) {
             request = MASTER_DUEL_TASK.matcher(command);
@@ -241,13 +250,13 @@ public final class AgentActivity extends Activity {
                 return;
             }
             Runnable inspect = () -> {
-                if (!AppActionService.inspect(choice.packageName, goal, larger, reply)) {
+                if (!AppActionService.inspect(choice.packageName, goal, larger, requestId, reply)) {
                     reply.accept("화면 잠금이나 진행 중인 작업 때문에 시작할 수 없어요.");
                 } else if (!open(activity, launch, reply)) {
                     AppActionService.stop("앱을 열지 못했어요.");
                 }
             };
-            if (inspectImmediately) {
+            if (requestId != null) {
                 inspect.run();
                 return;
             }

@@ -8,7 +8,7 @@ TLA는 Android와 Windows에서 쓰는 로컬 에이전트입니다. 플립4에�
 
 자연어 지시는 저장소의 `build/sdk/mobile-pc-model/llama-completion.exe`와 `build/sdk/mobile-pc-weights/qwen2.5-3b-instruct-q4_k_m.gguf`로 처리합니다. 다른 파일 경로를 쓰려면 `TLA_WINDOWS_LLAMA`와 `TLA_WINDOWS_WEIGHTS`를 지정합니다. 버튼 목록과 정확한 버튼 이름으로 요청하는 기능은 모델 파일 없이 사용할 수 있습니다.
 
-**내 휴대폰** 탭에서는 같은 Wi-Fi에 있는 Android 휴대폰을 선택하고 대화창에서 지시를 보냅니다. 페어링된 PC에서 보낸 지시는 휴대폰의 TLA가 바로 받아 처리하고, 답변을 PC 대화에 표시합니다. 대상이 모호하거나 개별 화면 동작을 검토해야 하면 해당 시점에 확인을 요청합니다. 처음 연결할 때는 휴대폰의 **개발자 옵션 → 무선 디버깅 → 페어링 코드로 기기 페어링**에 나온 주소와 코드를 PC TLA의 **기기 연결**에 입력합니다. 기기가 자동으로 나타나지 않으면 무선 디버깅 기본 화면의 주소로 연결합니다. **휴대폰 화면**을 펼치면 화면 새로고침과 터치 승인도 사용할 수 있습니다. ADB는 저장소의 `build/sdk/android/platform-tools`나 실행 경로에서 찾으며 `TLA_WINDOWS_ADB`로 지정할 수도 있습니다. [Android 무선 디버깅](https://developer.android.com/tools/adb#wireless)
+**내 휴대폰** 탭에서는 같은 Wi-Fi에 있는 Android 휴대폰을 선택하고 대화창에서 지시를 보냅니다. Google 검색과 일반 화면 작업은 페어링된 PC에서 지시를 한 번 보내면 실행하고, 답변을 PC 대화에 표시합니다. 여러 단계의 접근성 화면 작업에서는 결제·삭제·약관 등 확인이 필요한 동작이 감지되면 PC 대화창에 승인 또는 중지 버튼을 표시합니다. 처음 연결할 때는 휴대폰의 **개발자 옵션 → 무선 디버깅 → 페어링 코드로 기기 페어링**에 나온 주소와 코드를 PC TLA의 **기기 연결**에 입력합니다. 기기가 자동으로 나타나지 않으면 무선 디버깅 기본 화면의 주소로 연결합니다. **휴대폰 화면**을 펼치면 화면 새로고침과 터치 승인도 사용할 수 있습니다. ADB는 저장소의 `build/sdk/android/platform-tools`나 실행 경로에서 찾으며 `TLA_WINDOWS_ADB`로 지정할 수도 있습니다. [Android 무선 디버깅](https://developer.android.com/tools/adb#wireless)
 
 ## 초기 AIOS 부팅 실험
 

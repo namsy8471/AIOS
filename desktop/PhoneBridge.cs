@@ -12,7 +12,7 @@ namespace Tla.Desktop;
 internal sealed partial class PhoneBridge
 {
     internal sealed record Frame(string Target, string Window, BitmapSource Image);
-    internal sealed record Receipt(string State, string Reply);
+    internal sealed record Receipt(string State, string Reply, string Token);
     private readonly HashSet<IPAddress> paired = new();
     private readonly HashSet<string> connected = new(StringComparer.Ordinal);
     private readonly string adb = FindAdb();
@@ -79,7 +79,18 @@ internal sealed partial class PhoneBridge
         string raw = await Text(["-s", target, "shell", "content", "query", "--uri", $"content://org.aios.mobile.remote/{id}"]);
         var fields = ReceiptRow().Match(raw);
         return fields.Success ? new Receipt(fields.Groups[1].Value,
-            Encoding.UTF8.GetString(Convert.FromBase64String(fields.Groups[2].Value))) : null;
+            Encoding.UTF8.GetString(Convert.FromBase64String(fields.Groups[2].Value)), fields.Groups[3].Value) : null;
+    }
+
+    public async Task<bool> Decide(string target, string id, string token, bool approve)
+    {
+        if (!RequestKey().IsMatch(id) || !RequestKey().IsMatch(token)) return false;
+        var before = await ReadReceipt(target, id);
+        if (before?.State != "proposal" || before.Token != token) return false;
+        await Text(["-s", target, "shell", "content", "update", "--uri", $"content://org.aios.mobile.remote/{id}",
+            "--bind", $"token:s:{token}", "--bind", approve ? "decision:s:approve" : "decision:s:stop"]);
+        var status = await ReadReceipt(target, id);
+        return status is not null && status.Token != token;
     }
 
     public async Task<Frame> Capture(string target)
@@ -189,6 +200,9 @@ internal sealed partial class PhoneBridge
     [GeneratedRegex(@"mCurrentFocus=Window\{([^\r\n}]+)\}")]
     private static partial Regex FocusedWindow();
 
-    [GeneratedRegex(@"state=(pending|accepted|cancelled|reply), reply_b64=([A-Za-z0-9+/=]*)")]
+    [GeneratedRegex(@"state=(pending|accepted|cancelled|reply|proposal), reply_b64=([A-Za-z0-9+/=]*)(?:, token=([a-f0-9]{32}))?")]
     private static partial Regex ReceiptRow();
+
+    [GeneratedRegex(@"^[a-f0-9]{32}$")]
+    private static partial Regex RequestKey();
 }

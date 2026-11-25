@@ -11,12 +11,15 @@ public partial class MainWindow : Window
     private bool phoneBusy;
     private readonly PhoneBridge phone = new();
     private readonly ObservableCollection<string> phoneMessages = new();
+    private readonly ObservableCollection<PhoneApproval> phoneApprovals = new();
     private PhoneBridge.Frame? phoneFrame;
+    private sealed record PhoneApproval(string Target, string RequestId, string Token, string Description);
 
     public MainWindow()
     {
         InitializeComponent();
         PhoneConversation.ItemsSource = phoneMessages;
+        PhoneApprovals.ItemsSource = phoneApprovals;
         Loaded += async (_, _) =>
         {
             LoadTargets();
@@ -113,6 +116,7 @@ public partial class MainWindow : Window
             while (DateTime.UtcNow < deadline)
             {
                 var receipt = await phone.ReadReceipt(target, id);
+                ShowPhoneApproval(target, id, receipt);
                 if (receipt?.State is "reply" or "cancelled")
                 {
                     AddPhoneMessage("휴대폰 · " + receipt.Reply);
@@ -128,6 +132,34 @@ public partial class MainWindow : Window
             AddPhoneMessage("휴대폰 · 아직 응답을 확인하지 못했어요.");
         }
         catch (Exception) { AddPhoneMessage("휴대폰 · 응답을 확인하려면 무선 연결을 확인해 주세요."); }
+        finally { ShowPhoneApproval(target, id, null); }
+    }
+
+    private void ShowPhoneApproval(string target, string id, PhoneBridge.Receipt? receipt)
+    {
+        var current = phoneApprovals.FirstOrDefault(item => item.Target == target && item.RequestId == id);
+        if (receipt?.State == "proposal" && receipt.Token.Length != 0)
+        {
+            if (current?.Token == receipt.Token) return;
+            if (current is not null) phoneApprovals.Remove(current);
+            phoneApprovals.Add(new PhoneApproval(target, id, receipt.Token, receipt.Reply));
+        }
+        else if (current is not null) phoneApprovals.Remove(current);
+    }
+
+    private async void ApprovePhoneAction(object sender, RoutedEventArgs e) => await DecidePhoneAction(sender, true);
+    private async void StopPhoneAction(object sender, RoutedEventArgs e) => await DecidePhoneAction(sender, false);
+
+    private async Task DecidePhoneAction(object sender, bool approve)
+    {
+        if (sender is not Button { Tag: PhoneApproval approval }) return;
+        await WithPhone(async () =>
+        {
+            bool received = await phone.Decide(approval.Target, approval.RequestId, approval.Token, approve);
+            if (received) phoneApprovals.Remove(approval);
+            PhoneStatus.Text = received ? (approve ? "승인을 보냈어요." : "중지 요청을 보냈어요.")
+                : "휴대폰에서 이 동작을 확인하지 못했어요.";
+        });
     }
 
     private void AddPhoneMessage(string message)

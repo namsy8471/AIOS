@@ -87,6 +87,7 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <TextBlock Text="휴대폰에 지시하기" FontSize="26" FontWeight="SemiBold" Margin="0,4,0,12" />
             <Border Grid.Row="1" Background="White" CornerRadius="9" BorderBrush="#D6DEDA" BorderThickness="1">
@@ -101,7 +102,20 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
             </Border>
-            <Border Grid.Row="2" Background="White" BorderBrush="#C8D6CF" BorderThickness="1" CornerRadius="11" Padding="6" Margin="0,10,0,0">
+            <ItemsControl x:Name="PhoneApprovals" Grid.Row="2" Margin="0,6,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="#EDF3EF" CornerRadius="8" Padding="8" Margin="0,3">
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Right" Content="승인" Margin="5,0,0,0" Tag="{Binding}" Click="ApprovePhoneAction" />
+                                <Button DockPanel.Dock="Right" Content="중지" Margin="5,0,0,0" Tag="{Binding}" Click="StopPhoneAction" />
+                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Border Grid.Row="3" Background="White" BorderBrush="#C8D6CF" BorderThickness="1" CornerRadius="11" Padding="6" Margin="0,10,0,0">
                 <DockPanel LastChildFill="True">
                     <Button x:Name="SendPhone" DockPanel.Dock="Right" Content="보내기" Background="#D2E9DC" Click="SubmitPhone" />
                     <TextBox x:Name="PhoneInstruction" AutomationProperties.Name="휴대폰에 보낼 지시" ToolTip="예: 메모 보여줘"
@@ -109,7 +123,7 @@
                              MaxLength="400" KeyDown="PhoneInstructionKeyDown" />
                 </DockPanel>
             </Border>
-            <TextBlock Grid.Row="3" x:Name="PhoneStatus" Margin="0,8,0,0" TextWrapping="Wrap"
+            <TextBlock Grid.Row="4" x:Name="PhoneStatus" Margin="0,8,0,0" TextWrapping="Wrap"
                        Text="휴대폰에서 무선 디버깅을 켜고, 페어링 팝업의 주소와 코드를 입력하세요." />
             </Grid>
         </Grid>
