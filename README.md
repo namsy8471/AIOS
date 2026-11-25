@@ -1,6 +1,12 @@
 # TLA · Thanks, Local Agent
 
-TLA는 Android와 Windows에서 쓰는 로컬 에이전트입니다. 플립4에서 로컬 모델로 메모 변경을 제안하고, 검색을 브라우저에 열고, 사용자가 승인한 앱 동작을 수행합니다. 긴 문서 작업은 Wi-Fi로 연결한 Windows 로컬 모델 작업자에게 맡길 수 있습니다. [Android 앱과 Windows 협업](docs/mobile-collaboration.md)
+TLA는 Android와 Windows에서 쓰는 로컬 에이전트입니다. 플립4에서 로컬 모델로 메모 변경을 제안하고, 검색을 브라우저에 열고, 사용자가 승인한 앱 동작을 수행합니다. Windows 앱에서는 열린 창을 선택하고 로컬 모델이 제안한 버튼 동작을 승인할 수 있습니다. 긴 문서 작업은 Wi-Fi로 연결한 Windows 로컬 모델 작업자에게 맡길 수 있습니다. [Android 앱과 Windows 협업](docs/mobile-collaboration.md)
+
+## Windows 데스크톱 앱
+
+.NET 10 SDK가 설치된 Windows에서 `dotnet publish desktop/Tla.Desktop.csproj -c Release -o build/windows-tla --artifacts-path build/windows-tla-artifacts`로 빌드하고 `build/windows-tla/TLA.exe`를 엽니다. 창을 선택한 뒤 `저장해 줘`처럼 지시하거나 화면에 표시된 버튼을 선택합니다. TLA는 Windows UI Automation으로 확인한 버튼만 제안하며 클릭 전에 창과 버튼 이름을 보여줍니다. 승인한 창에서 다른 모달 창이 열렸거나 버튼이 바뀌면 멈춥니다.
+
+자연어 지시는 저장소의 `build/sdk/mobile-pc-model/llama-completion.exe`와 `build/sdk/mobile-pc-weights/qwen2.5-3b-instruct-q4_k_m.gguf`로 처리합니다. 다른 파일 경로를 쓰려면 `TLA_WINDOWS_LLAMA`와 `TLA_WINDOWS_WEIGHTS`를 지정합니다. 버튼 목록과 정확한 버튼 이름으로 요청하는 기능은 모델 파일 없이 사용할 수 있습니다.
 
 ## 초기 AIOS 부팅 실험
 
