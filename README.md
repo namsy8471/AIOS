@@ -8,6 +8,8 @@ TLA는 Android와 Windows에서 쓰는 로컬 에이전트입니다. 플립4에�
 
 자연어 지시는 저장소의 `build/sdk/mobile-pc-model/llama-completion.exe`와 `build/sdk/mobile-pc-weights/qwen2.5-3b-instruct-q4_k_m.gguf`로 처리합니다. 다른 파일 경로를 쓰려면 `TLA_WINDOWS_LLAMA`와 `TLA_WINDOWS_WEIGHTS`를 지정합니다. 버튼 목록과 정확한 버튼 이름으로 요청하는 기능은 모델 파일 없이 사용할 수 있습니다.
 
+**내 휴대폰** 탭에서는 같은 Wi-Fi에 있는 Android 휴대폰을 선택하고 대화창에서 지시를 보냅니다. 휴대폰의 TLA가 요청 내용을 보여주고, 휴대폰에서 승인하면 처리한 답변이 PC 대화에 표시됩니다. 처음 연결할 때는 휴대폰의 **개발자 옵션 → 무선 디버깅 → 페어링 코드로 기기 페어링**에 나온 주소와 코드를 PC TLA의 **기기 연결**에 입력합니다. 기기가 자동으로 나타나지 않으면 무선 디버깅 기본 화면의 주소로 연결합니다. **휴대폰 화면**을 펼치면 화면 새로고침과 터치 승인도 사용할 수 있습니다. ADB는 저장소의 `build/sdk/android/platform-tools`나 실행 경로에서 찾으며 `TLA_WINDOWS_ADB`로 지정할 수도 있습니다. [Android 무선 디버깅](https://developer.android.com/tools/adb#wireless)
+
 ## 초기 AIOS 부팅 실험
 
 **합격 기준은 AIOS가 MCP 문서 도구로 받은 한글 변경을 저장하고, 같은 가상 디스크로 다시 부팅했을 때 원문과 변경 내용이 모두 일치하는 것입니다.** 이 실험은 고정된 MCP 요청을 보내므로 모델 계정이나 API 키가 필요 없습니다.

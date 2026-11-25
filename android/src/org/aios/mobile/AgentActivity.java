@@ -213,7 +213,7 @@ public final class AgentActivity extends Activity {
             choice -> runChatApp(activity, choice, actionLabel, reply), reply);
     }
 
-    static boolean handleScreenTask(Activity activity, String command, boolean larger, Consumer<String> reply) {
+    static boolean handleScreenTask(Activity activity, String command, Consumer<String> reply) {
         Matcher request = CHAT_TASK.matcher(command);
         if (!request.matches()) {
             request = MASTER_DUEL_TASK.matcher(command);
@@ -224,11 +224,13 @@ public final class AgentActivity extends Activity {
             if (!requireAccessibility(activity, reply)) return;
             boolean visual = ScreenVision.supports(choice.packageName, goal);
             ScreenVision vision = new ScreenVision(activity);
+            MobileEngine engine = new MobileEngine(activity);
+            boolean larger = !visual && engine.weights(true).isFile();
             if (visual && (!vision.installed() || android.os.Build.VERSION.SDK_INT < 34)) {
                 reply.accept("게임 화면을 읽으려면 Android 14 이상과 화면 인식이 포함된 TLA가 필요해요.");
                 return;
             }
-            if (!(visual ? vision.ready() : new MobileEngine(activity).weights(larger).isFile())) {
+            if (!(visual ? vision.ready() : engine.weights(larger).isFile())) {
                 reply.accept(visual ? "도구 · 설정에서 화면 인식 모델과 이미지 인코더를 가져오면 게임 화면을 볼 수 있어요."
                     : "선택한 로컬 모델을 가져오면 앱 화면에서 다음 동작을 찾을 수 있어요.");
                 return;
@@ -240,7 +242,8 @@ public final class AgentActivity extends Activity {
             }
             new AlertDialog.Builder(activity).setTitle("앱 화면 확인")
                 .setMessage("‘" + choice.label + "’에서 ‘" + goal + "’에 필요한 버튼을 찾아볼까요?"
-                    + (visual ? "\n이 앱의 화면을 캡처해 휴대폰의 로컬 모델로 판독합니다." : ""))
+                    + (visual ? "\n이 앱의 화면을 캡처해 휴대폰의 로컬 모델로 판독합니다."
+                        : larger ? "\n로컬 대형 모델로 화면을 확인합니다." : "\n로컬 경량 모델로 한 단계만 제안합니다."))
                 .setNegativeButton("취소", null)
                 .setPositiveButton("화면 확인", (dialog, which) -> {
                     if (!AppActionService.inspect(choice.packageName, goal, larger, reply)) {

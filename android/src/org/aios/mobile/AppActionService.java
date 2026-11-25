@@ -27,11 +27,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import org.json.JSONObject;
 
 public final class AppActionService extends AccessibilityService {
     static final int MAX_STEPS = 8;
     private static final long TIMEOUT_MS = 15_000;
     private static final long APPROVAL_MS = 45_000;
+    private static final int MAX_SCREEN_ACTIONS = 6;
     private static volatile AppActionService connected;
     private static volatile String status = "";
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -57,7 +59,10 @@ public final class AppActionService extends AccessibilityService {
         final boolean larger;
         final Consumer<String> reply;
         final boolean visual;
-        List<String> labels = List.of();
+        int actions;
+        String scroll;
+        AgentAction.ScreenState snapshot;
+        AgentAction.ScreenState previous;
         int windowId = -1;
         Future<?> inference;
         AgentAction proposed;
@@ -262,10 +267,15 @@ public final class AppActionService extends AccessibilityService {
                 if (task.visual && !task.visualStarted && window.isActive()) {
                     if (SystemClock.uptimeMillis() >= ends - TIMEOUT_MS + 3000) startVisualInspection(task, window);
                 } else if (!task.visual && task.inference == null && window.isActive()) {
-                    List<String> labels = AgentAction.buttonLabels(root, task.packageName);
-                    if (!labels.isEmpty()) chooseScreenProposal(task, window.getId(), labels);
-                    else if (SystemClock.uptimeMillis() >= ends - TIMEOUT_MS + 3500) {
-                        finishAction("이 화면에서 누를 수 있는 버튼 이름을 읽지 못했어요.");
+                    AgentAction.ScreenState current = AgentAction.readScreen(root, task.packageName);
+                    boolean initial = task.previous == null;
+                    boolean canRead = !current.buttons.isEmpty() || current.scrollUp != null || current.scrollDown != null
+                        || (!initial && !current.text.isEmpty());
+                    if (canRead && !current.sameScreen(task.previous)) {
+                        chooseScreenProposal(task, window.getId(), current);
+                    } else if (SystemClock.uptimeMillis() >= ends - TIMEOUT_MS + 4000) {
+                        finishAction(initial ? "이 화면에서 누를 수 있는 버튼 이름을 읽지 못했어요."
+                            : "입력 후 화면에서 다음 단계나 완료 문구를 확인하지 못했어요.");
                         return;
                     }
                 }
@@ -408,16 +418,16 @@ public final class AppActionService extends AccessibilityService {
         if (!gesturing) finishAction("타이틀에 누르기 동작을 보낼 수 없었어요.");
     }
 
-    private void chooseScreenProposal(ScreenTask task, int windowId, List<String> labels) {
+    private void chooseScreenProposal(ScreenTask task, int windowId, AgentAction.ScreenState screen) {
         task.windowId = windowId;
-        task.labels = labels;
+        task.snapshot = screen;
         approvalWindow = windowId;
         stopOverlay.setText("TLA 동작 찾는 중 · 중지");
         ends = SystemClock.uptimeMillis() + 65_000;
         task.inference = plannerWorker.submit(() -> {
             try {
-                int number = new MobileEngine(this).chooseScreenButton(task.goal, labels, task.larger);
-                main.post(() -> showScreenProposal(task, number));
+                JSONObject step = new MobileEngine(this).chooseScreenStep(task.goal, screen, task.larger);
+                main.post(() -> showScreenProposal(task, step));
             } catch (Exception error) {
                 main.post(() -> {
                     if (screenTask == task) finishAction("로컬 모델이 화면에서 다음 동작을 정하지 못했어요.");
@@ -426,31 +436,63 @@ public final class AppActionService extends AccessibilityService {
         });
     }
 
-    private void showScreenProposal(ScreenTask task, int number) {
+    private void showScreenProposal(ScreenTask task, JSONObject step) {
         if (screenTask != task) return;
-        if (number == 0) {
-            finishAction("이 화면에서 요청에 맞는 버튼을 찾지 못했어요.");
+        AgentAction.ScreenState live = matchingScreen(task);
+        if (live == null) {
+            finishAction("화면이 바뀌어 제안을 취소했어요.");
             return;
         }
-        task.proposed = new AgentAction(task.packageName, task.labels.get(number - 1), AgentAction.Kind.CLICK);
-        if (screenProposalTarget(task) == null) {
-            finishAction("버튼이 사라졌거나 같은 이름의 버튼이 여러 개 있어요.");
+        Object completion = step.opt("done");
+        if (step.length() == 1 && completion instanceof String && task.snapshot.text.contains(completion)) {
+            finishAction("현재 화면에서 이 문구를 확인했어요. ‘" + completion + "’");
+            return;
+        }
+        Object button = step.opt("tap");
+        Object direction = step.opt("scroll");
+        String proposal;
+        if (task.actions >= MAX_SCREEN_ACTIONS) {
+            finishAction("승인한 동작을 여섯 번 실행했어요. 이어서 할 일을 다시 요청해 주세요.");
+            return;
+        }
+        if (step.length() == 1 && button instanceof String && task.snapshot.buttons.contains(button)) {
+            task.proposed = new AgentAction(task.packageName, (String) button, AgentAction.Kind.CLICK);
+            if (screenProposalTarget(task, live) == null) {
+                finishAction("버튼이 사라졌거나 같은 이름의 버튼이 여러 개 있어요.");
+                return;
+            }
+            proposal = "‘" + task.proposed.label + "’ 누르기";
+        } else if (step.length() == 1 && (("up".equals(direction) && live.scrollUp != null)
+                || ("down".equals(direction) && live.scrollDown != null))) {
+            task.scroll = (String) direction;
+            proposal = "up".equals(direction) ? "목록 위로 스크롤" : "목록 아래로 스크롤";
+        } else {
+            finishAction("이 화면에서 요청에 맞는 동작을 찾지 못했어요.");
             return;
         }
         ends = SystemClock.uptimeMillis() + APPROVAL_MS;
         stopOverlay.setText("TLA 중지");
-        continueOverlay.setText("‘" + task.proposed.label + "’ 누르기");
+        continueOverlay.setText(proposal);
         continueOverlay.setAllCaps(false);
         continueOverlay.setVisibility(View.VISIBLE);
     }
 
-    private AccessibilityNodeInfo screenProposalTarget(ScreenTask task) {
+    private AgentAction.ScreenState matchingScreen(ScreenTask task) {
         if (!screenReady() || SystemClock.uptimeMillis() >= ends) return null;
         try {
             AccessibilityNodeInfo root = approvalRoot();
-            if (!task.proposed.owns(root) || root.getWindowId() != task.windowId) return null;
-            if (!AgentAction.buttonLabels(root, task.packageName).equals(task.labels)) return null;
-            AccessibilityNodeInfo match = task.proposed.match(root);
+            if (root == null || root.getWindowId() != task.windowId
+                    || !task.packageName.equals(String.valueOf(root.getPackageName()))) return null;
+            AgentAction.ScreenState current = AgentAction.readScreen(root, task.packageName);
+            return current.sameScreen(task.snapshot) ? current : null;
+        } catch (RuntimeException error) {
+            return null;
+        }
+    }
+
+    private AccessibilityNodeInfo screenProposalTarget(ScreenTask task, AgentAction.ScreenState current) {
+        try {
+            AccessibilityNodeInfo match = task.proposed.match(current.root);
             if (match == null || !match.refresh() || !task.proposed.owns(match) || !match.isVisibleToUser()
                     || !task.proposed.matchesLabel(match) || match.getWindowId() != task.windowId) return null;
             return task.proposed.clickTarget(match);
@@ -465,17 +507,45 @@ public final class AppActionService extends AccessibilityService {
             applyVisualProposal(task);
             return;
         }
-        if (task.proposed == null) return;
-        AccessibilityNodeInfo target = screenProposalTarget(task);
-        if (target == null) {
-            finishAction("승인 전 화면이 바뀌어 버튼을 누르지 않았어요.");
-        } else {
-            boolean pressed;
-            try { pressed = target.performAction(AccessibilityNodeInfo.ACTION_CLICK); }
-            catch (RuntimeException unavailable) { pressed = false; }
-            finishAction(pressed ? "‘" + task.proposed.label + "’ 누르기를 전달했어요."
-                : "앱에서 누르기 동작을 받지 않았어요.");
+        if (task.proposed == null && task.scroll == null) return;
+        AgentAction.ScreenState current = matchingScreen(task);
+        if (current == null) {
+            finishAction("승인 전 화면이 바뀌어 동작을 취소했어요.");
+            return;
         }
+        boolean up = "up".equals(task.scroll);
+        AccessibilityNodeInfo.AccessibilityAction action = task.scroll == null
+            ? AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK
+            : up ? AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP : AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN;
+        AccessibilityNodeInfo target = task.scroll == null ? screenProposalTarget(task, current)
+            : up ? current.scrollUp : current.scrollDown;
+        boolean performed;
+        try {
+            performed = target != null && target.refresh() && target.isVisibleToUser() && target.isEnabled()
+                && target.getWindowId() == task.windowId && task.packageName.equals(String.valueOf(target.getPackageName()))
+                && (task.scroll == null || target.getActionList().contains(action)) && target.performAction(action.getId());
+        } catch (RuntimeException unavailable) { performed = false; }
+        if (!performed) {
+            finishAction("선택한 화면 동작을 실행하지 못했어요.");
+            return;
+        }
+        if (!task.larger) {
+            finishAction(task.scroll == null ? "‘" + task.proposed.label + "’ 누르기를 전달했어요."
+                : "선택한 방향으로 스크롤했어요.");
+            return;
+        }
+        task.actions++;
+        task.previous = task.snapshot;
+        task.proposed = null;
+        task.scroll = null;
+        task.inference = null;
+        task.windowId = -1;
+        approvalWindow = -1;
+        continueOverlay.setVisibility(View.GONE);
+        stopOverlay.setText("TLA 다음 화면 확인 중 · 중지");
+        ends = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        main.removeCallbacks(poll);
+        main.postDelayed(poll, 650);
     }
 
     private void approveStep() {

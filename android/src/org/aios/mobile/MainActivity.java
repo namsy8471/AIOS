@@ -36,6 +36,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
+    private String remoteRequest;
     private static final int PICK_MODEL = 1;
     private static final int PICK_NOTES = 2;
     private static final int PICK_PC = 3;
@@ -239,6 +240,10 @@ public class MainActivity extends Activity {
     }
 
     private void appendMessage(String value, boolean user) {
+        if (!user && remoteRequest != null) {
+            RemoteResults.update(remoteRequest, "reply", value);
+            remoteRequest = null;
+        }
         welcome.setVisibility(View.GONE);
         LinearLayout.LayoutParams entry = new LinearLayout.LayoutParams(user ? -2 : -1, -2);
         entry.gravity = user ? Gravity.END : Gravity.START;
@@ -256,12 +261,23 @@ public class MainActivity extends Activity {
     }
 
     private void sendCommand() {
+        sendCommand(null);
+    }
+
+    final void executeRemote(String id, String command) {
+        RemoteResults.update(id, "accepted", "휴대폰에서 요청을 승인했어요.");
+        setPrompt(command);
+        sendCommand(id);
+    }
+
+    private void sendCommand(String requestId) {
         String text = instruction.getText().toString().strip();
         if (text.isEmpty()) return;
         if (text.length() > 512) {
             status.setText("지시를 512자 이내로 입력해 주세요.");
             return;
         }
+        remoteRequest = requestId;
         clearMemoPreview();
         instruction.setText("");
         appendMessage(text, true);
@@ -283,7 +299,7 @@ public class MainActivity extends Activity {
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
         } else if (AgentActivity.handleChatApp(this, text, this::replyToAppTask)
-                || AgentActivity.handleScreenTask(this, text, modelChoice.getSelectedItemPosition() == 1, this::replyToAppTask)) {
+                || AgentActivity.handleScreenTask(this, text, this::replyToAppTask)) {
             return;
         } else {
             planChatCommand(text);

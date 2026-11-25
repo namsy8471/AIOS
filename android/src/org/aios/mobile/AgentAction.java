@@ -63,25 +63,67 @@ final class AgentAction {
         return node != null && packageName.contentEquals(node.getPackageName() == null ? "" : node.getPackageName());
     }
 
-    static List<String> buttonLabels(AccessibilityNodeInfo root, String packageName) {
+    static final class ScreenState {
+        final AccessibilityNodeInfo root;
+        final List<String> buttons;
+        final List<String> text;
+        final AccessibilityNodeInfo scrollUp;
+        final AccessibilityNodeInfo scrollDown;
+
+        ScreenState(AccessibilityNodeInfo root, List<String> buttons, List<String> text,
+                AccessibilityNodeInfo scrollUp, AccessibilityNodeInfo scrollDown) {
+            this.root = root;
+            this.buttons = List.copyOf(buttons);
+            this.text = List.copyOf(text);
+            this.scrollUp = scrollUp;
+            this.scrollDown = scrollDown;
+        }
+
+        boolean sameScreen(ScreenState other) {
+            return other != null && buttons.equals(other.buttons) && text.equals(other.text)
+                && java.util.Objects.equals(scrollUp, other.scrollUp) && java.util.Objects.equals(scrollDown, other.scrollDown);
+        }
+    }
+
+    static ScreenState readScreen(AccessibilityNodeInfo root, String packageName) {
         ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
-        LinkedHashSet<String> labels = new LinkedHashSet<>();
+        LinkedHashSet<String> buttons = new LinkedHashSet<>();
+        LinkedHashSet<String> text = new LinkedHashSet<>();
+        AccessibilityNodeInfo scrollUp = null;
+        AccessibilityNodeInfo scrollDown = null;
+        int upCount = 0;
+        int downCount = 0;
         nodes.push(root);
         int visited = 0;
-        while (!nodes.isEmpty() && labels.size() < 16) {
+        while (!nodes.isEmpty()) {
             AccessibilityNodeInfo node = nodes.pop();
             if (++visited > MAX_NODES || node.getChildCount() > MAX_NODES - visited - nodes.size()) {
                 throw new IllegalStateException("화면 요소가 너무 많습니다.");
             }
             if (!packageName.equals(String.valueOf(node.getPackageName())) || !node.isVisibleToUser()
                     || node.isPassword() || node.isEditable()) continue;
+            if (node.isScrollable() && node.isEnabled()) {
+                List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+                if (actions.contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP)) {
+                    scrollUp = node;
+                    upCount++;
+                }
+                if (actions.contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN)) {
+                    scrollDown = node;
+                    downCount++;
+                }
+            }
             for (CharSequence name : new CharSequence[]{node.getText(), node.getContentDescription()}) {
                 if (name == null || !node.isEnabled()) continue;
                 String label = name.toString();
                 if (label.isBlank() || label.length() > 96 || !label.equals(label.strip()) || label.contains("<|")
                         || label.chars().anyMatch(Character::isISOControl)) continue;
                 AgentAction action = new AgentAction(packageName, label, Kind.CLICK);
-                if (action.clickableTarget(node) != null) labels.add(label);
+                if (action.clickableTarget(node) != null) {
+                    if (buttons.size() < 16) buttons.add(label);
+                } else if (text.size() < 12) {
+                    text.add(label);
+                }
                 break;
             }
             for (int i = node.getChildCount() - 1; i >= 0; i--) {
@@ -89,7 +131,8 @@ final class AgentAction {
                 if (child != null) nodes.push(child);
             }
         }
-        return List.copyOf(labels);
+        return new ScreenState(root, List.copyOf(buttons), List.copyOf(text), upCount == 1 ? scrollUp : null,
+            downCount == 1 ? scrollDown : null);
     }
 
     boolean matchesLabel(AccessibilityNodeInfo node) {
