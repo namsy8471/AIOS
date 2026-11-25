@@ -199,7 +199,7 @@ jobs:
         with:
           name: flip4-reference-unsigned
           path: build/flip4/reference-image
-      - run: sudo apt-get update -qq && sudo apt-get install -y cpio gcc libc6-dev qemu-system-arm e2fsprogs mkbootimg ninja-build parted
+      - run: sudo apt-get update -qq && sudo apt-get install -y binutils cpio device-tree-compiler gcc libc6-dev qemu-system-arm e2fsprogs mkbootimg ninja-build parted
       - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/split-model-starter.raw
       - name: Infer and save in the disconnected ARM64 guest
         run: |
@@ -258,6 +258,39 @@ jobs:
             build/flip4/reference-drivers-model/proof.json
             build/flip4/reference-drivers-model/layout.json
             build/flip4/reference-drivers-model/console-*.log
+      - name: Reject the wrong Flip4 volume and reopen a saved document after reboot
+        run: |
+          bundle=build/flip4
+          proof="$bundle/native-storage"
+          target=target/aarch64-unknown-linux-musl/release
+          mkdir -p "$proof" "$target"
+          gzip -dc "$bundle/reference-model/payload/ramdisk" |
+            cpio -i --quiet --to-stdout ./init > "$target/aios"
+          test -s "$target/aios"
+          dd if="$bundle/split-model-starter.raw" of="$proof/model-source.ext4" bs=1M skip=1 count=768 conv=sparse status=none
+          bash scripts/flip4-native-volumes.sh "$proof/model-source.ext4" "$proof/volumes" sda2 sda1
+          sed 's/^work=sda2:.*/work=sda2:11111111-1111-4111-8111-111111111111/' \
+            "$proof/volumes/volumes.conf" > "$proof/wrong.conf"
+          for profile in valid invalid; do
+            settings="$proof/volumes/volumes.conf"
+            if [[ $profile == invalid ]]; then settings="$proof/wrong.conf"; fi
+            sudo bash scripts/arm64-early-init.sh "$bundle/kernel" "$proof/$profile-init" flip4-native-document "$settings"
+            bash scripts/flip4-reference-image.sh --native-document "$bundle/recovery.img" \
+              "$proof/$profile-init/native-document-init.cpio.gz" "$proof/$profile"
+          done
+          truncate -s 786M "$proof/disk.raw"
+          parted -s "$proof/disk.raw" mklabel msdos mkpart primary ext4 1MiB 769MiB mkpart primary ext4 769MiB 785MiB
+          dd if="$proof/volumes/model.ext4" of="$proof/disk.raw" bs=1M seek=1 conv=notrunc,sparse status=none
+          dd if="$proof/volumes/work.ext4" of="$proof/disk.raw" bs=1M seek=769 conv=notrunc,sparse status=none
+          timeout 300s python3 tests/flip4_native_storage.py "$bundle" "$proof/valid" "$proof/invalid" "$proof/disk.raw" "$proof" > "$proof/proof.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flip4-native-storage-proof
+          path: |
+            build/flip4/native-storage/proof.json
+            build/flip4/native-storage/*.log
+            build/flip4/native-storage/*/touch-policy.json
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference
