@@ -30,6 +30,8 @@ public final class AgentActivity extends Activity {
     private EditText anchor;
     private Spinner apps;
     private Spinner actions;
+    private final List<AgentAction> queued = new ArrayList<>();
+    private TextView queueText;
 
     @Override protected void onCreate(Bundle savedState) {
         super.onCreate(savedState);
@@ -64,13 +66,20 @@ public final class AgentActivity extends Activity {
         ui.tone(search, true);
 
         content = ui.card(body);
-        label("다른 앱에서 한 번 수행", 20);
+        label("다른 앱에서 수행", 20);
         label("대상 앱", 14);
         apps = spinner(launchableApps());
         label("동작", 14);
         actions = spinner(List.of(AgentAction.Kind.values()));
         anchor = input("버튼 또는 카드의 정확한 이름");
         ui.tone(button("앱 작업 확인", this::reviewAction), true);
+        button("단계 추가", this::addStep);
+        button("단계 초기화", () -> {
+            queued.clear();
+            anchor.setText("");
+            queueText.setText("");
+        });
+        queueText = label("", 14);
         button("TLA 앱 작업 접근성 설정", () -> open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         status = label("", 14);
     }
@@ -118,24 +127,64 @@ public final class AgentActivity extends Activity {
             return;
         }
         try {
-            AgentAction.Kind kind = (AgentAction.Kind) actions.getSelectedItem();
-            AgentAction action = new AgentAction(choice.packageName, anchor.getText().toString(), kind);
+            List<AgentAction> steps = new ArrayList<>(queued);
+            if (steps.isEmpty() || !anchor.getText().toString().isBlank()) steps.add(selectedAction(choice));
+            validateSteps(steps, choice.packageName);
+            List<AgentAction> plan = List.copyOf(steps);
             new AlertDialog.Builder(this).setTitle("앱 동작 승인")
-                .setMessage(choice + "\n\n" + kind + "\n대상 요소: " + action.label + "\n\n15초 안에 한 번 실행합니다.")
+                .setMessage(choice + "\n\n" + describe(plan) + "\n\n단계마다 최대 15초 동안 지정한 요소를 기다립니다.")
                 .setNegativeButton("취소", null)
-                .setPositiveButton("한 번 실행", (dialog, which) -> execute(action)).show();
+                .setPositiveButton(plan.size() == 1 ? "한 번 실행" : "단계 실행", (dialog, which) -> execute(plan)).show();
         } catch (IllegalArgumentException error) {
             status.setText(error.getMessage());
         }
     }
 
-    private void execute(AgentAction action) {
-        Intent launch = getPackageManager().getLaunchIntentForPackage(action.packageName);
+    private AgentAction selectedAction(AppChoice choice) {
+        if (choice == null) throw new IllegalArgumentException("실행할 앱을 선택해 주세요.");
+        return new AgentAction(choice.packageName, anchor.getText().toString(),
+            (AgentAction.Kind) actions.getSelectedItem());
+    }
+
+    private void addStep() {
+        try {
+            AgentAction step = selectedAction((AppChoice) apps.getSelectedItem());
+            List<AgentAction> steps = new ArrayList<>(queued);
+            steps.add(step);
+            validateSteps(steps, step.packageName);
+            queued.add(step);
+            anchor.setText("");
+            queueText.setText(describe(queued));
+        } catch (IllegalArgumentException error) {
+            status.setText(error.getMessage());
+        }
+    }
+
+    private static void validateSteps(List<AgentAction> steps, String target) {
+        if (steps.size() > AppActionService.MAX_STEPS) {
+            throw new IllegalArgumentException("한 번에 최대 " + AppActionService.MAX_STEPS + "단계까지 승인할 수 있습니다.");
+        }
+        if (steps.stream().anyMatch(step -> !target.equals(step.packageName))) {
+            throw new IllegalArgumentException("단계는 같은 앱에서만 실행할 수 있습니다. 앱을 바꾸려면 단계를 초기화해 주세요.");
+        }
+    }
+
+    private static String describe(List<AgentAction> steps) {
+        List<String> lines = new ArrayList<>();
+        for (int index = 0; index < steps.size(); index++) {
+            AgentAction step = steps.get(index);
+            lines.add((index + 1) + ". " + step.kind + " · " + step.label);
+        }
+        return String.join("\n", lines);
+    }
+
+    private void execute(List<AgentAction> plan) {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(plan.get(0).packageName);
         if (launch == null) {
             status.setText("선택한 앱을 열 수 없습니다.");
             return;
         }
-        if (!AppActionService.begin(action)) {
+        if (!AppActionService.begin(plan)) {
             status.setText("화면 잠금이나 진행 중인 작업 때문에 시작할 수 없습니다.");
             return;
         }

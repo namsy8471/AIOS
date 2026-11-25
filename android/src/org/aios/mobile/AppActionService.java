@@ -10,31 +10,45 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.graphics.PixelFormat;
+import android.view.Gravity;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.widget.Button;
+import java.util.List;
 
 public final class AppActionService extends AccessibilityService {
+    static final int MAX_STEPS = 8;
     private static final long TIMEOUT_MS = 15_000;
     private static volatile AppActionService connected;
     private static volatile String status = "";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::checkScreen;
     private AgentAction pending;
+    private List<AgentAction> sequence = List.of();
+    private int stepIndex;
     private long ends;
     private long gestureReadyAt;
     private boolean foundApp;
     private boolean gesturing;
+    private long generation;
+    private Button stopOverlay;
 
     static boolean available() { return connected != null; }
     static String status() { return status; }
 
     static boolean begin(AgentAction action) {
-        return connected != null && connected.arm(action);
+        return begin(List.of(action));
+    }
+
+    static boolean begin(List<AgentAction> actions) {
+        return connected != null && connected.arm(actions);
     }
 
     static void stop(String reason) {
-        if (connected != null && connected.pending != null) connected.finishAction(reason);
+        if (connected != null && !connected.sequence.isEmpty()) connected.finishAction(reason);
     }
 
     @Override protected void onServiceConnected() {
@@ -45,29 +59,84 @@ public final class AppActionService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {}
 
     @Override public void onInterrupt() {
-        if (pending != null) finishAction("접근성 작업이 중단됐습니다.");
+        if (!sequence.isEmpty()) finishAction("접근성 작업이 중단됐습니다.");
     }
 
     @Override public boolean onUnbind(Intent intent) {
         if (connected == this) {
-            if (pending != null || gesturing) status = "접근성 서비스 연결이 끝났습니다.";
+            if (!sequence.isEmpty() || gesturing) status = "접근성 서비스 연결이 끝났습니다.";
             connected = null;
         }
         main.removeCallbacksAndMessages(null);
         pending = null;
+        sequence = List.of();
+        gesturing = false;
+        generation++;
+        removeOverlay();
         return super.onUnbind(intent);
     }
 
-    private boolean arm(AgentAction action) {
-        if (pending != null || gesturing || !screenReady()) return false;
-        pending = action;
+    private boolean arm(List<AgentAction> actions) {
+        if (!sequence.isEmpty() || gesturing || !screenReady() || actions.isEmpty() || actions.size() > MAX_STEPS) return false;
+        String target = actions.get(0).packageName;
+        if (actions.stream().anyMatch(action -> !target.equals(action.packageName))) return false;
+        sequence = List.copyOf(actions);
+        generation++;
+        stepIndex = 0;
         foundApp = false;
+        setPackageFilter(target);
+        showOverlay();
+        queueStep(200);
+        return true;
+    }
+
+    private void queueStep(long delay) {
+        pending = sequence.get(stepIndex);
         gestureReadyAt = 0;
         ends = SystemClock.uptimeMillis() + TIMEOUT_MS;
-        status = "지정한 화면과 요소를 확인 중입니다.";
-        setPackageFilter(action.packageName);
-        main.postDelayed(poll, 200);
-        return true;
+        status = (stepIndex + 1) + "/" + sequence.size() + " 단계의 화면과 요소를 확인 중입니다.";
+        if (stopOverlay != null) stopOverlay.setText("TLA  " + (stepIndex + 1) + "/" + sequence.size() + "  중지");
+        main.postDelayed(poll, delay);
+    }
+
+    private void completedStep(String singleResult) {
+        if (sequence.isEmpty()) return;
+        if (++stepIndex == sequence.size()) {
+            finishAction(sequence.size() == 1 ? singleResult
+                : sequence.size() + "개 동작을 전달했습니다. 앱에서 결과를 확인해 주세요.");
+        } else {
+            queueStep(400);
+        }
+    }
+
+    private void showOverlay() {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setMinHeight(Math.round(48 * getResources().getDisplayMetrics().density));
+        button.setOnClickListener(view -> finishAction("사용자가 중지했습니다. 이미 전달한 동작은 앱에서 확인해 주세요."));
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT);
+        params.gravity = Gravity.TOP | Gravity.END;
+        try {
+            getSystemService(WindowManager.class).addView(button, params);
+            stopOverlay = button;
+        } catch (WindowManager.BadTokenException | SecurityException error) {
+            // Returning to TLA also stops the current sequence.
+        }
+    }
+
+    private void removeOverlay() {
+        if (stopOverlay == null) return;
+        Button old = stopOverlay;
+        stopOverlay = null;
+        try {
+            getSystemService(WindowManager.class).removeView(old);
+        } catch (IllegalArgumentException ignored) {
+            // Android may have removed the service window during disconnect.
+        }
     }
 
     private boolean screenReady() {
@@ -83,8 +152,10 @@ public final class AppActionService extends AccessibilityService {
 
     private void finishAction(String message) {
         pending = null;
+        sequence = List.of();
         status = message;
         main.removeCallbacks(poll);
+        removeOverlay();
         setPackageFilter(getPackageName());
     }
 
@@ -132,23 +203,28 @@ public final class AppActionService extends AccessibilityService {
             if (action.kind == AgentAction.Kind.CLICK) {
                 AccessibilityNodeInfo target = action.clickTarget(match);
                 pending = null;
-                finishAction(target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    ? "누르기 동작을 전달했습니다. 앱에서 결과를 확인해 주세요."
-                    : "앱에서 누르기 동작을 받아들이지 않았습니다.");
+                if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    completedStep("누르기 동작을 전달했습니다. 앱에서 결과를 확인해 주세요.");
+                } else {
+                    finishAction("앱에서 누르기 동작을 받아들이지 않았습니다.");
+                }
             } else {
                 Rect bounds = new Rect();
                 window.getBoundsInScreen(bounds);
                 GestureDescription swipe = action.swipe(match, bounds, window.getDisplayId(), getResources().getDisplayMetrics().density);
                 pending = null;
                 status = "스와이프 동작을 보내는 중입니다.";
+                long dispatched = generation;
                 gesturing = dispatchGesture(swipe, new GestureResultCallback() {
                     @Override public void onCompleted(GestureDescription gesture) {
+                        if (dispatched != generation) return;
                         gesturing = false;
-                        finishAction("스와이프 한 번을 보냈습니다. 앱에서 결과를 확인해 주세요.");
+                        completedStep("스와이프 한 번을 보냈습니다. 앱에서 결과를 확인해 주세요.");
                     }
                     @Override public void onCancelled(GestureDescription gesture) {
+                        if (dispatched != generation) return;
                         gesturing = false;
-                        finishAction("스와이프가 취소됐습니다.");
+                        if (!sequence.isEmpty()) finishAction("스와이프가 취소됐습니다.");
                     }
                 }, main);
                 if (!gesturing) finishAction("스와이프를 시작할 수 없습니다.");
