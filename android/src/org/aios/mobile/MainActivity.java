@@ -265,7 +265,7 @@ public class MainActivity extends Activity {
     }
 
     final void executeRemote(String id, String command) {
-        RemoteResults.update(id, "accepted", "휴대폰에서 요청을 승인했어요.");
+        RemoteResults.update(id, "accepted", "휴대폰에서 요청을 받았어요.");
         setPrompt(command);
         sendCommand(id);
     }
@@ -299,7 +299,7 @@ public class MainActivity extends Activity {
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
         } else if (AgentActivity.handleChatApp(this, text, this::replyToAppTask)
-                || AgentActivity.handleScreenTask(this, text, this::replyToAppTask)) {
+                || AgentActivity.handleScreenTask(this, text, requestId != null, this::replyToAppTask)) {
             return;
         } else {
             planChatCommand(text);

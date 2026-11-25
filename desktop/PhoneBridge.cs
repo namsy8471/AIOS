@@ -61,11 +61,17 @@ internal sealed partial class PhoneBridge
             throw new InvalidOperationException("400자 이내의 한 줄 지시를 입력하세요.");
         string id = Guid.NewGuid().ToString("N");
         string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(instruction));
-        string reply = await Text(["-s", target, "shell", "am", "start", "-W", "-n", "org.aios.mobile/.RemoteCommandActivity",
+        // NEW_TASK | MULTIPLE_TASK keeps Android from reusing the previous request's activity.
+        string reply = await Text(["-s", target, "shell", "am", "start", "-W", "-f", "0x18000000", "-n", "org.aios.mobile/.RemoteCommandActivity",
             "--es", "request_id", id, "--es", "command_b64", data]);
         if (!reply.Contains("Status: ok", StringComparison.Ordinal))
             throw new InvalidOperationException("휴대폰에서 지시를 받지 못했어요. 최신 TLA가 설치되어 있는지 확인하세요.");
-        return id;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (await ReadReceipt(target, id) is not null) return id;
+            await Task.Delay(200);
+        }
+        throw new InvalidOperationException("휴대폰에서 새 요청을 확인하지 못했어요. TLA가 열려 있는지 확인해 주세요.");
     }
 
     public async Task<Receipt?> ReadReceipt(string target, string id)

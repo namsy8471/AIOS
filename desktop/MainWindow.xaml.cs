@@ -99,7 +99,7 @@ public partial class MainWindow : Window
             string id = await phone.SendInstruction(target, request);
             AddPhoneMessage("나 · " + request);
             PhoneInstruction.Clear();
-            PhoneStatus.Text = "보냈어요. 휴대폰에서 요청을 승인해 주세요.";
+            PhoneStatus.Text = "보냈어요. 휴대폰 응답을 기다리는 중이에요.";
             _ = WatchReceipt(target, id);
         });
     }
