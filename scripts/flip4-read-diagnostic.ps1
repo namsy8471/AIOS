@@ -3,6 +3,7 @@ param(
     [ValidateRange(1, 600)][int]$TimeoutSeconds = 60
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'flip4-windows-serial.ps1')
 
 function ConvertFrom-DiagnosticLine([string]$Line) {
     $prefix = 'AIOS_FLIP4_SNAPSHOT '
@@ -20,26 +21,10 @@ function ConvertFrom-DiagnosticLine([string]$Line) {
     }
 }
 
-$clock = [Diagnostics.Stopwatch]::StartNew()
 $deadline = [TimeSpan]::FromSeconds($TimeoutSeconds)
-while (-not $Port -and $clock.Elapsed -lt $deadline) {
-    $ports = @(Get-PnpDevice -PresentOnly -Class Ports -ErrorAction SilentlyContinue |
-        Where-Object InstanceId -Match '^USB\\VID_0525&PID_A4A7(?:\\|&)' |
-        ForEach-Object {
-            if ($_.FriendlyName -match '\((COM[1-9][0-9]*)\)$') { $Matches[1] }
-        } | Sort-Object -Unique)
-    if ($ports.Count -gt 1) { throw 'Multiple USB CDC diagnostic ports are present. Select one with -Port.' }
-    if ($ports.Count -eq 1) { $Port = $ports[0]; break }
-    Start-Sleep -Milliseconds 250
-}
-if (-not $Port) { throw 'No AIOS USB CDC diagnostic port appeared.' }
-
-$serial = [System.IO.Ports.SerialPort]::new($Port, 115200)
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$serial = Open-Flip4Serial $Port $deadline
 try {
-    $serial.Encoding = [Text.Encoding]::UTF8
-    $serial.DtrEnable = $true
-    $serial.ReadTimeout = 250
-    $serial.Open()
     while ($clock.Elapsed -lt $deadline) {
         try {
             $line = $serial.ReadLine()
@@ -52,7 +37,7 @@ try {
             return
         }
     }
-    throw "No complete AIOS Flip4 boot report was received on $Port."
+    throw "No complete AIOS Flip4 boot report was received on $($serial.PortName)."
 } finally {
     $serial.Dispose()
 }
