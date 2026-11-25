@@ -51,4 +51,13 @@ foreach ($key in @('qcom,board-id', 'qcom,msm-id', 'dtbo-hw_rev', 'dtbo-hw_rev_e
     } else { $null }
 }
 $properties['device_tree_hex'] = $board
+$firmware = [ordered]@{}
+foreach ($name in @('tsp_stm/fst2ca78y_b4.bin', 'tsp_zinitix/ztw522_b4.bin')) {
+    $path = "/vendor/firmware/$name"
+    $record = Read-DeviceValue @("if [ -r '$path' ]; then sha256sum '$path'; fi")
+    $firmware[$path] = if ($record -match '^([a-fA-F0-9]{64})\s') {
+        $Matches[1].ToLowerInvariant()
+    } else { $null }
+}
+$properties['touch_firmware_sha256'] = $firmware
 $properties | ConvertTo-Json
