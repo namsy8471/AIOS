@@ -165,6 +165,12 @@ public final class AgentActionProbe extends Activity {
             "Timer length was not preserved");
         require(Settings.ACTION_WIFI_SETTINGS.equals(PhoneIntents.openAction("와이파이 설정 열어줘")),
             "Wi-Fi settings command did not resolve");
+        String storeCommand = "구글 플레이 스토어에 들어가서 마스터 듀얼 다운로드 받아줘";
+        require("마스터 듀얼".equals(PhoneIntents.playQuery(storeCommand)), "Play request did not preserve the title");
+        require("마스터 듀얼".equals(PhoneIntents.playQuery("마스터 듀얼을 설치해 줘")), "Store-free command did not resolve");
+        Intent listing = PhoneIntents.playIntent(PhoneIntents.playQuery(storeCommand));
+        require("com.android.vending".equals(listing.getPackage())
+            && "jp.konami.masterduel".equals(listing.getData().getQueryParameter("id")), "Wrong store listing");
         Activity screen = probe.startActivitySync(new Intent(app, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
             View root = screen.getWindow().getDecorView();
@@ -178,6 +184,55 @@ public final class AgentActionProbe extends Activity {
                         .anyMatch(node -> "Google에 보낼 검색어\n\n네이버".equals(String.valueOf(node.getText())));
             }, "Search approval did not contain only the intended query");
             clickLabel(automation, app.getPackageName(), "취소");
+
+            IntentFilter market = new IntentFilter(Intent.ACTION_VIEW);
+            market.addDataScheme("market");
+            Instrumentation.ActivityMonitor store = probe.addMonitor(market, new Instrumentation.ActivityResult(0, null), true);
+            try {
+                sendCommand(probe, field, send, storeCommand);
+                root(automation, new AgentAction(app.getPackageName(), "Play 스토어 열기", AgentAction.Kind.WAIT));
+                clickLabel(automation, app.getPackageName(), "취소");
+                require(store.getHits() == 0, "Cancelled Play request opened another app");
+                sendCommand(probe, field, send, storeCommand);
+                clickLabel(automation, app.getPackageName(), "열기");
+                await(() -> store.getHits() == 1, "Approved Play request did not reach Android");
+            } finally {
+                probe.removeMonitor(store);
+            }
+            long plannerMillis = -1;
+            if (app.getPackageManager().getLaunchIntentForPackage("com.android.chrome") != null
+                    && new MobileEngine(app).weights(false).isFile()) {
+                IntentFilter launcherFilter = new IntentFilter(Intent.ACTION_MAIN);
+                launcherFilter.addCategory(Intent.CATEGORY_LAUNCHER);
+                launcherFilter.addCategory(Intent.CATEGORY_INFO);
+                Instrumentation.ActivityMonitor launcher = probe.addMonitor(launcherFilter,
+                    new Instrumentation.ActivityResult(0, null), true);
+                try {
+                    sendCommand(probe, field, send, "Chrom 열어줘");
+                    root(automation, new AgentAction(app.getPackageName(), "대상 앱 확인", AgentAction.Kind.WAIT));
+                    clickLabel(automation, app.getPackageName(), "취소");
+                    require(launcher.getHits() == 0, "Cancelled suggestion launched an app");
+
+                    long start = SystemClock.elapsedRealtime();
+                    sendCommand(probe, field, send, "Chrome 좀 띄워 줘");
+                    AgentAction confirmation = new AgentAction(app.getPackageName(), "맞아요, 열기", AgentAction.Kind.CLICK);
+                    await(() -> confirmation.match(automation.getRootInActiveWindow()) != null,
+                        "Local model did not propose opening Chrome", 65_000);
+                    plannerMillis = SystemClock.elapsedRealtime() - start;
+                    require(launcher.getHits() == 0, "Model proposal launched before approval");
+                    clickLabel(automation, app.getPackageName(), confirmation.label);
+                    await(() -> launcher.getHits() == 1, "Approved model proposal did not request Chrome");
+
+                    sendCommand(probe, field, send, "게임 출석 좀 챙겨줘");
+                    AgentAction question = new AgentAction(app.getPackageName(),
+                        "어느 앱에서 할까요? 앱 이름을 포함해서 다시 말씀해 주세요.", AgentAction.Kind.WAIT);
+                    await(() -> question.match(automation.getRootInActiveWindow()) != null,
+                        "Missing app did not prompt for clarification", 65_000);
+                    require(launcher.getHits() == 1, "Missing app caused a launch");
+                } finally {
+                    probe.removeMonitor(launcher);
+                }
+            }
 
             boolean approved = Settings.System.canWrite(app);
             int brightness = Settings.System.getInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
@@ -215,6 +270,8 @@ public final class AgentActionProbe extends Activity {
             }
             JSONObject results = new JSONObject().put("brightness_review_or_permission", true)
                 .put("brightness_applied_and_restored", approved).put("timer_approval", true)
+                .put("play_listing_approval", true)
+                .put("model_app_open_confirmation_ms", plannerMillis)
                 .put("media_volume_applied_and_restored", false);
 
             AudioManager audio = app.getSystemService(AudioManager.class);

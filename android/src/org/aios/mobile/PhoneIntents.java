@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.net.Uri;
 import android.provider.AlarmClock;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -18,6 +19,11 @@ final class PhoneIntents {
     private static final Pattern TIMER = Pattern.compile(
         "^(?:(\\d{1,4})\\s*분\\s*)?(?:(\\d{1,5})\\s*초\\s*)?타이머(?:를)?\\s*"
         + "(?:(?:맞춰|시작|설정|켜)(?:\\s*(?:해\\s*)?(?:줘|주세요))?)?[.!?]*$");
+    private static final Pattern PLAY_COMMAND = Pattern.compile(
+        "^(?:구글\\s*)?플레이\\s*스토어(?:\\s*(?:에서|에(?:\\s*들어가서)?))?\\s+(.+?)"
+        + "\\s+(?:설치|다운로드(?:\\s*받아)?|찾아|검색)(?:\\s*해)?(?:\\s*(?:줘|주세요))?[.!?]*$");
+    private static final Pattern INSTALL = Pattern.compile(
+        "^(.+?)\\s+(?:설치|다운로드(?:\\s*받아)?|깔아)(?:\\s*해)?(?:\\s*(?:줘|주세요))?[.!?]*$");
 
     private PhoneIntents() {}
 
@@ -46,7 +52,34 @@ final class PhoneIntents {
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true);
     }
 
+    static String playQuery(String command) {
+        Matcher match = PLAY_COMMAND.matcher(command);
+        if (match.matches()) return match.group(1).strip();
+        match = INSTALL.matcher(command);
+        if (!match.matches()) return null;
+        String title = match.group(1).strip().replaceFirst("[을를]$", "");
+        return isMasterDuel(title) ? title : null;
+    }
+
+    static Intent playIntent(String query) {
+        String text = AgentAction.field(query, 128);
+        Uri.Builder market = new Uri.Builder().scheme("market");
+        if (isMasterDuel(text)) market.authority("details").appendQueryParameter("id", "jp.konami.masterduel");
+        else market.authority("search").appendQueryParameter("q", text);
+        return new Intent(Intent.ACTION_VIEW, market.build()).setPackage("com.android.vending");
+    }
+
+    private static boolean isMasterDuel(String title) {
+        String alias = title.replaceAll("\\s+", "");
+        return alias.equals("마스터듀얼") || alias.equals("유희왕마스터듀얼") || alias.equalsIgnoreCase("MasterDuel");
+    }
+
     static boolean handle(Activity activity, String command, Consumer<String> reply) {
+        String app = playQuery(command);
+        if (app != null) {
+            offerInstall(activity, app, reply);
+            return true;
+        }
         String action = openAction(command);
         if (action != null) {
             launch(activity, new Intent(action), "요청한 화면을 열었어요.", reply);
@@ -68,6 +101,21 @@ final class PhoneIntents {
                 launch(activity, timerIntent(seconds), "시계 앱에 " + duration + " 타이머를 요청했어요.", reply))
             .show();
         return true;
+    }
+
+    static void offerInstall(Activity activity, String app, Consumer<String> reply) {
+        try {
+            Intent store = playIntent(app);
+            boolean listing = "details".equals(store.getData().getAuthority());
+            new AlertDialog.Builder(activity).setTitle("Play 스토어 열기")
+                .setMessage("Play 스토어에서 ‘" + app + "’의 " + (listing ? "공식 앱 페이지" : "검색 결과") + "를 열까요?")
+                .setNegativeButton("취소", (dialog, which) -> reply.accept("Play 스토어 요청을 취소했어요."))
+                .setPositiveButton("열기", (dialog, which) ->
+                    launch(activity, store, "Play 스토어에 " + app + " 페이지를 열도록 요청했어요.", reply))
+                .show();
+        } catch (IllegalArgumentException error) {
+            reply.accept(error.getMessage());
+        }
     }
 
     private static void launch(Activity activity, Intent intent, String message, Consumer<String> reply) {

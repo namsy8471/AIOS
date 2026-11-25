@@ -12,16 +12,19 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.graphics.PixelFormat;
 import android.view.Gravity;
+import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import java.util.List;
 
 public final class AppActionService extends AccessibilityService {
     static final int MAX_STEPS = 8;
     private static final long TIMEOUT_MS = 15_000;
+    private static final long APPROVAL_MS = 45_000;
     private static volatile AppActionService connected;
     private static volatile String status = "";
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -35,6 +38,9 @@ public final class AppActionService extends AccessibilityService {
     private boolean gesturing;
     private long generation;
     private Button stopOverlay;
+    private Button continueOverlay;
+    private LinearLayout overlay;
+    private int approvalWindow = -1;
 
     static boolean available() { return connected != null; }
     static String status() { return status; }
@@ -92,6 +98,8 @@ public final class AppActionService extends AccessibilityService {
 
     private void queueStep(long delay) {
         pending = sequence.get(stepIndex);
+        approvalWindow = -1;
+        if (continueOverlay != null) continueOverlay.setVisibility(View.GONE);
         gestureReadyAt = 0;
         ends = SystemClock.uptimeMillis() + TIMEOUT_MS;
         status = (stepIndex + 1) + "/" + sequence.size() + " 단계의 화면과 요소를 확인 중입니다.";
@@ -103,17 +111,24 @@ public final class AppActionService extends AccessibilityService {
         if (sequence.isEmpty()) return;
         if (++stepIndex == sequence.size()) {
             finishAction(sequence.size() == 1 ? singleResult
-                : sequence.size() + "개 동작을 전달했습니다. 앱에서 결과를 확인해 주세요.");
+                : sequence.size() + "단계를 마쳤습니다. 앱에서 결과를 확인해 주세요.");
         } else {
             queueStep(400);
         }
     }
 
     private void showOverlay() {
+        LinearLayout panel = new LinearLayout(this);
         Button button = new Button(this);
         button.setAllCaps(false);
         button.setMinHeight(Math.round(48 * getResources().getDisplayMetrics().density));
         button.setOnClickListener(view -> finishAction("사용자가 중지했습니다. 이미 전달한 동작은 앱에서 확인해 주세요."));
+        Button resume = new Button(this);
+        resume.setText("확인하고 계속");
+        resume.setVisibility(View.GONE);
+        resume.setOnClickListener(view -> approveStep());
+        panel.addView(button);
+        panel.addView(resume);
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -121,17 +136,21 @@ public final class AppActionService extends AccessibilityService {
             PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.END;
         try {
-            getSystemService(WindowManager.class).addView(button, params);
+            getSystemService(WindowManager.class).addView(panel, params);
+            overlay = panel;
             stopOverlay = button;
+            continueOverlay = resume;
         } catch (WindowManager.BadTokenException | SecurityException error) {
             // Returning to TLA also stops the current sequence.
         }
     }
 
     private void removeOverlay() {
-        if (stopOverlay == null) return;
-        Button old = stopOverlay;
+        if (overlay == null) return;
+        LinearLayout old = overlay;
+        overlay = null;
         stopOverlay = null;
+        continueOverlay = null;
         try {
             getSystemService(WindowManager.class).removeView(old);
         } catch (IllegalArgumentException ignored) {
@@ -152,6 +171,7 @@ public final class AppActionService extends AccessibilityService {
 
     private void finishAction(String message) {
         pending = null;
+        approvalWindow = -1;
         sequence = List.of();
         status = message;
         main.removeCallbacks(poll);
@@ -159,14 +179,49 @@ public final class AppActionService extends AccessibilityService {
         setPackageFilter(getPackageName());
     }
 
+    private void approveStep() {
+        AgentAction action = pending;
+        if (action == null || approvalWindow == -1) return;
+        try {
+            AccessibilityNodeInfo root = approvalRoot();
+            if (SystemClock.uptimeMillis() >= ends || !screenReady() || !action.owns(root)
+                    || root.getWindowId() != approvalWindow || action.match(root) == null) {
+                finishAction("승인 화면이 바뀌었습니다. 작업을 다시 시작해 주세요.");
+                return;
+            }
+            main.removeCallbacks(poll);
+            completedStep("화면을 확인하고 승인했습니다.");
+        } catch (RuntimeException error) {
+            finishAction("승인할 화면을 다시 확인할 수 없었습니다.");
+        }
+    }
+
+    private AccessibilityNodeInfo approvalRoot() {
+        var displays = getWindowsOnAllDisplays();
+        for (int index = 0; index < displays.size(); index++) {
+            for (AccessibilityWindowInfo window : displays.valueAt(index)) {
+                if (window.getId() == approvalWindow && window.isFocused()) return window.getRoot();
+            }
+        }
+        return null;
+    }
+
     private void checkScreen() {
         AgentAction action = pending;
         if (action == null) return;
+        if (approvalWindow != -1 && SystemClock.uptimeMillis() >= ends) {
+            finishAction("제한 시간 안에 화면 확인을 승인하지 않았습니다.");
+            return;
+        }
         if (!screenReady() || SystemClock.uptimeMillis() >= ends) {
             finishAction("화면이 잠겼거나 제한 시간 안에 지정한 요소를 찾지 못했습니다.");
             return;
         }
-        AccessibilityNodeInfo root = getRootInActiveWindow(0);
+        AccessibilityNodeInfo root = approvalWindow == -1 ? getRootInActiveWindow(0) : approvalRoot();
+        if (approvalWindow != -1 && !action.owns(root)) {
+            finishAction("승인 화면이 바뀌었습니다. 작업을 다시 시작해 주세요.");
+            return;
+        }
         if (!action.owns(root)) {
             if (root != null && (foundApp || !getPackageName().equals(String.valueOf(root.getPackageName())))) {
                 finishAction("다른 앱이 열려 작업을 중단했습니다.");
@@ -178,17 +233,25 @@ public final class AppActionService extends AccessibilityService {
         try {
             AccessibilityWindowInfo window = root.getWindow();
             if (window == null || window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION
-                    || !window.isActive() || !window.isFocused()) {
+                    || (approvalWindow == -1 && !window.isActive()) || !window.isFocused()) {
                 gestureReadyAt = 0;
                 main.postDelayed(poll, 220);
                 return;
             }
-            if (action.kind != AgentAction.Kind.CLICK && gestureReadyAt == 0) {
+            if (action.kind.swipe() && gestureReadyAt == 0) {
                 gestureReadyAt = SystemClock.uptimeMillis() + 550;
                 main.postAtTime(poll, gestureReadyAt);
                 return;
             }
             AccessibilityNodeInfo match = action.match(root);
+            if (approvalWindow != -1) {
+                if (window.getId() != approvalWindow || match == null) {
+                    finishAction("승인 화면이 바뀌었습니다. 작업을 다시 시작해 주세요.");
+                } else {
+                    main.postDelayed(poll, 220);
+                }
+                return;
+            }
             if (match == null) {
                 main.postDelayed(poll, 220);
                 return;
@@ -196,11 +259,24 @@ public final class AppActionService extends AccessibilityService {
             AccessibilityNodeInfo active = getRootInActiveWindow(0);
             if (SystemClock.uptimeMillis() >= ends || !screenReady() || !action.owns(active)
                     || active.getWindowId() != window.getId() || !match.refresh() || !action.matchesLabel(match)
-                    || !action.owns(match) || !match.isVisibleToUser() || !match.isEnabled()
+                    || !action.owns(match) || !match.isVisibleToUser()
+                    || ((action.kind == AgentAction.Kind.CLICK || action.kind.swipe()) && !match.isEnabled())
                     || match.getWindowId() != window.getId()) {
                 throw new IllegalStateException("동작 직전에 화면이 바뀌었습니다.");
             }
-            if (action.kind == AgentAction.Kind.CLICK) {
+            if (action.kind == AgentAction.Kind.WAIT) {
+                completedStep("지정한 화면 문구를 확인했습니다.");
+            } else if (action.kind == AgentAction.Kind.APPROVE) {
+                if (continueOverlay == null) {
+                    finishAction("화면 위에 승인 버튼을 표시할 수 없어 중단했습니다.");
+                    return;
+                }
+                approvalWindow = window.getId();
+                ends = SystemClock.uptimeMillis() + APPROVAL_MS;
+                status = "사용자가 화면을 확인하고 승인하기를 기다리고 있습니다.";
+                continueOverlay.setVisibility(View.VISIBLE);
+                main.postDelayed(poll, 220);
+            } else if (action.kind == AgentAction.Kind.CLICK) {
                 AccessibilityNodeInfo target = action.clickTarget(match);
                 pending = null;
                 if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {

@@ -16,11 +16,13 @@ final class AgentAction {
     private static final Pattern SEARCH_SUFFIX = Pattern.compile(
         "(?:^|[\\p{Zs}\\t]+)검색(?:[\\p{Zs}\\t]*해(?:[\\p{Zs}\\t]*(?:줘|주세요))?)?[.!?]*$");
     enum Kind {
-        CLICK("버튼 누르기"), LEFT("왼쪽으로 스와이프"), RIGHT("오른쪽으로 스와이프");
+        CLICK("버튼 누르기"), LEFT("왼쪽으로 스와이프"), RIGHT("오른쪽으로 스와이프"),
+        WAIT("화면 문구 기다리기"), APPROVE("화면 확인 후 승인");
 
         final String label;
         Kind(String label) { this.label = label; }
         @Override public String toString() { return label; }
+        boolean swipe() { return this == LEFT || this == RIGHT; }
     }
 
     static final int MAX_NODES = 2000;

@@ -169,18 +169,44 @@ final class MobileEngine {
 
     String inferMemoLine(String instruction, boolean larger) throws Exception {
         validateMemoInstruction(instruction);
-        File weights = weights(larger);
-        if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
         String system = "Extract the exact text to append from the Korean memo request. "
             + "Return one JSON object with tool append_line and line. No markdown. "
             + "Example: 메모에 사과를 적어줘 -> {\"tool\":\"append_line\",\"line\":\"사과\"}";
+        JSONObject proposed = inferJson(instruction, larger, system, 64);
+        String line = proposed.getString("line");
+        if (proposed.length() != 2 || !"append_line".equals(proposed.getString("tool")) || line.isBlank()
+                || line.chars().anyMatch(Character::isISOControl) || !instruction.contains(line)) {
+            throw new IOException("안전한 메모 변경안을 만들지 못했습니다.");
+        }
+        return line;
+    }
+
+    JSONObject planCommand(String instruction, boolean larger) throws Exception {
+        validateMemoInstruction(instruction);
+        String system = "Choose one phone tool for the Korean user's goal. JSON only. Copy app and label exactly from the user. "
+            + "Tools: open(app), click(app,label), install(app), search(label), clarify(). "
+            + "띄워, 보여줘, 켜줘 mean open. 설치, 다운로드, 깔아 mean install. 눌러 means click. "
+            + "Use clarify if required details are missing or the tools cannot do it. Never invent a button.\n"
+            + "계산기를 쓸 수 있게 띄워줘 -> {\"tool\":\"open\",\"app\":\"계산기\"}\n"
+            + "갤러리 좀 띄워 줘 -> {\"tool\":\"open\",\"app\":\"갤러리\"}\n"
+            + "Spotify를 설치해 줘 -> {\"tool\":\"install\",\"app\":\"Spotify\"}\n"
+            + "게임 출석 좀 챙겨줘 -> {\"tool\":\"clarify\"}\n"
+            + "작업 앱에 있는 출석 체크를 대신 눌러 줘 -> {\"tool\":\"click\",\"app\":\"작업 앱\",\"label\":\"출석 체크\"}\n"
+            + "서울 날씨 인터넷으로 알아봐 -> {\"tool\":\"search\",\"label\":\"서울 날씨\"}";
+        return inferJson(instruction, larger, system, 96);
+    }
+
+    private JSONObject inferJson(String instruction, boolean larger, String system, int tokens) throws Exception {
+        File weights = weights(larger);
+        if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
         String prompt = "<|im_start|>system\n" + system + "<|im_end|>\n<|im_start|>user\n"
             + instruction + "<|im_end|>\n<|im_start|>assistant\n";
         File output = File.createTempFile("model-", ".text", storage);
         Process process = null;
         try {
             process = new ProcessBuilder(nativeModelRunner.getAbsolutePath(), "-m", weights.getAbsolutePath(),
-                "-ngl", "0", "-n", "64", prompt).redirectOutput(output).redirectError(new File("/dev/null")).start();
+                "-ngl", "0", "-n", Integer.toString(tokens), prompt)
+                .redirectOutput(output).redirectError(new File("/dev/null")).start();
             process.getOutputStream().close();
             if (!process.waitFor(60, TimeUnit.SECONDS)) throw new IOException("로컬 모델 실행 시간이 초과됐습니다.");
             if (process.exitValue() != 0) {
@@ -188,16 +214,10 @@ final class MobileEngine {
             }
             String generated;
             try (InputStream input = new java.io.FileInputStream(output)) {
-                generated = new String(readLimited(input, 8192), StandardCharsets.UTF_8);
+                generated = new String(readLimited(input, 16384), StandardCharsets.UTF_8);
             }
             if (generated.startsWith(prompt)) generated = generated.substring(prompt.length());
-            JSONObject proposed = new JSONObject(generated.trim());
-            String line = proposed.getString("line");
-            if (proposed.length() != 2 || !"append_line".equals(proposed.getString("tool")) || line.isBlank()
-                    || line.chars().anyMatch(Character::isISOControl) || !instruction.contains(line)) {
-                throw new IOException("안전한 메모 변경안을 만들지 못했습니다.");
-            }
-            return line;
+            return new JSONObject(generated.trim());
         } finally {
             if (process != null && process.isAlive()) process.destroyForcibly();
             output.delete();

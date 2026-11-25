@@ -126,6 +126,7 @@ public class MainActivity extends Activity {
         modelChoice = selector("로컬 경량 모델", "로컬 대형 모델");
         button("선택한 로컬 모델 가져오기", () ->
             pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
+        button("수동 앱 작업", () -> startActivity(new Intent(this, AgentActivity.class)));
         content = ui.card(settings);
         label("PC 연결", 18);
         pcStatus = label("연결한 PC 없음", 14);
@@ -163,13 +164,9 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams actionRow = new LinearLayout.LayoutParams(-1, -2);
         actionRow.topMargin = ui.dp(8);
         composer.addView(actions, actionRow);
-        Button tools = ui.composerAction("+", "웹 검색 · 앱 작업", false,
-            () -> startActivity(new Intent(this, AgentActivity.class)));
         Button preview = ui.composerAction("↑", "보내기", true, this::sendCommand);
         preview.setTag("memo-preview-button");
-        controls.add(tools);
         controls.add(preview);
-        actions.addView(tools, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
         actions.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
         actions.addView(preview, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
         content = conversation;
@@ -279,8 +276,53 @@ public class MainActivity extends Activity {
             confirmDraftRequest(text);
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
+        } else if (AgentActivity.handleChatApp(this, text, result -> appendMessage(result, false))) {
+            return;
         } else {
-            appendMessage("밝기, 미디어 음량, 타이머, 카메라나 설정 열기, 메모와 웹 검색을 요청할 수 있어요. 다른 앱을 조작하려면 도구에서 대상 앱과 동작을 선택해 주세요.", false);
+            planChatCommand(text);
+        }
+    }
+
+    private void planChatCommand(String text) {
+        boolean larger = modelChoice.getSelectedItemPosition() == 1;
+        if (!engine.weights(larger).isFile()) {
+            clarifyChatCommand(text);
+            return;
+        }
+        run("로컬 모델로 이 요청을 처리할 방법을 찾는 중", () -> {
+            try { return engine.planCommand(text, larger); }
+            catch (Exception invalid) { return new JSONObject(); }
+        }, plan -> {
+            status.setText("");
+            Consumer<String> reply = result -> appendMessage(result, false);
+            String app = planArgument(plan, "app", text);
+            String label = planArgument(plan, "label", text);
+            String tool = plan.optString("tool");
+            if ("open".equals(tool) && app != null && plan.length() == 2) {
+                AgentActivity.offerChatApp(this, app, null, true, reply);
+            } else if ("click".equals(tool) && app != null && label != null && plan.length() == 3) {
+                AgentActivity.offerChatApp(this, app, label, true, reply);
+            } else if ("install".equals(tool) && app != null && plan.length() == 2) {
+                PhoneIntents.offerInstall(this, app, reply);
+            } else if ("search".equals(tool) && label != null && plan.length() == 2) {
+                AgentActivity.confirmSearch(this, label, reply);
+            } else {
+                clarifyChatCommand(text);
+            }
+        });
+    }
+
+    private static String planArgument(JSONObject plan, String key, String request) {
+        if (!(plan.opt(key) instanceof String)) return null;
+        String value = plan.optString(key).strip();
+        return !value.isEmpty() && value.length() <= 128 && request.contains(value) ? value : null;
+    }
+
+    private void clarifyChatCommand(String text) {
+        if (text.contains("출석") || text.contains("눌러")) {
+            appendMessage("어느 앱에서 할까요? 앱 이름을 포함해서 다시 말씀해 주세요.", false);
+        } else {
+            appendMessage("어떤 결과를 원하시나요? 앱 이름이나 하려는 일을 조금 더 알려 주세요.", false);
         }
     }
 

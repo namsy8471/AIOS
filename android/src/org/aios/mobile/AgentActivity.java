@@ -19,10 +19,17 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class AgentActivity extends Activity {
+    private static final Pattern CHAT_CLICK = Pattern.compile(
+        "^(.+?)\\s*에서\\s+(.+?)(?:\\s+버튼)?(?:을|를)?\\s+(?:눌러|클릭)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
+    private static final Pattern CHAT_OPEN = Pattern.compile(
+        "^(.+?)(?:\\s+앱(?:을)?)?\\s+(?:열어|실행)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
     private WorkspaceUi ui;
     private LinearLayout content;
     private TextView status;
@@ -68,10 +75,10 @@ public final class AgentActivity extends Activity {
         content = ui.card(body);
         label("다른 앱에서 수행", 20);
         label("대상 앱", 14);
-        apps = spinner(launchableApps());
+        apps = spinner(launchableApps(this));
         label("동작", 14);
         actions = spinner(List.of(AgentAction.Kind.values()));
-        anchor = input("버튼 또는 카드의 정확한 이름");
+        anchor = input("버튼·카드·화면 문구의 정확한 이름");
         ui.tone(button("앱 작업 확인", this::reviewAction), true);
         button("단계 추가", this::addStep);
         button("단계 초기화", () -> {
@@ -132,7 +139,7 @@ public final class AgentActivity extends Activity {
             validateSteps(steps, choice.packageName);
             List<AgentAction> plan = List.copyOf(steps);
             new AlertDialog.Builder(this).setTitle("앱 동작 승인")
-                .setMessage(choice + "\n\n" + describe(plan) + "\n\n단계마다 최대 15초 동안 지정한 요소를 기다립니다.")
+                .setMessage(choice + "\n\n" + describe(plan) + "\n\n화면 요소는 최대 15초, 승인 버튼은 최대 45초 기다립니다.")
                 .setNegativeButton("취소", null)
                 .setPositiveButton(plan.size() == 1 ? "한 번 실행" : "단계 실행", (dialog, which) -> execute(plan)).show();
         } catch (IllegalArgumentException error) {
@@ -179,36 +186,135 @@ public final class AgentActivity extends Activity {
     }
 
     private void execute(List<AgentAction> plan) {
-        Intent launch = getPackageManager().getLaunchIntentForPackage(plan.get(0).packageName);
+        execute(this, plan, status::setText);
+    }
+
+    static boolean handleChatApp(Activity activity, String command, Consumer<String> reply) {
+        Matcher request = CHAT_CLICK.matcher(command);
+        boolean click = request.matches();
+        if (!click) {
+            request = CHAT_OPEN.matcher(command);
+            if (!request.matches()) return false;
+        }
+        String label = click ? request.group(2).strip() : null;
+        if (label != null && label.length() >= 2
+                && ((label.startsWith("\"") && label.endsWith("\"")) || (label.startsWith("'") && label.endsWith("'")))) {
+            label = label.substring(1, label.length() - 1);
+        }
+        offerChatApp(activity, request.group(1), label, false, reply);
+        return true;
+    }
+
+    static void offerChatApp(Activity activity, String name, String actionLabel, boolean modelProposed, Consumer<String> reply) {
+        try {
+            String requestedName = AgentAction.field(name, 128);
+            String alias = normalized(requestedName);
+            List<AppChoice> matches = new ArrayList<>();
+            List<AppChoice> installed = launchableApps(activity);
+            for (AppChoice choice : installed) {
+                if (normalized(choice.label).equalsIgnoreCase(alias)
+                        || (choice.packageName.equals("jp.konami.masterduel")
+                            && (alias.equals("마스터듀얼") || alias.equals("유희왕마스터듀얼")))) {
+                    matches.add(choice);
+                }
+            }
+            if (matches.size() == 1 && (!modelProposed || actionLabel != null)) {
+                runChatApp(activity, matches.get(0), actionLabel, reply);
+                return;
+            }
+            if (matches.isEmpty() && alias.length() >= 2) {
+                String lower = alias.toLowerCase(Locale.ROOT);
+                for (AppChoice choice : installed) {
+                    if (normalized(choice.label).toLowerCase(Locale.ROOT).contains(lower)) matches.add(choice);
+                }
+            }
+            if (matches.isEmpty()) {
+                reply.accept("‘" + requestedName + "’은 설치된 앱에서 찾지 못했어요. 홈 화면에 표시된 앱 이름이 뭔가요?");
+                return;
+            }
+            AlertDialog.Builder clarify = new AlertDialog.Builder(activity).setTitle("대상 앱 확인")
+                .setNegativeButton("취소", null);
+            if (matches.size() == 1) {
+                AppChoice suggestion = matches.get(0);
+                String question = "‘" + suggestion.label + "’ 앱을 말씀하신 건가요?";
+                if (actionLabel == null) question += " 맞으면 이 앱을 열게요.";
+                clarify.setMessage(question)
+                    .setPositiveButton(actionLabel == null ? "맞아요, 열기" : "맞아요",
+                        (dialog, which) -> runChatApp(activity, suggestion, actionLabel, reply));
+            } else {
+                clarify.setItems(matches.stream().map(AppChoice::toString).toArray(String[]::new),
+                    (dialog, which) -> runChatApp(activity, matches.get(which), actionLabel, reply));
+            }
+            clarify.show();
+        } catch (IllegalArgumentException error) {
+            reply.accept(error.getMessage());
+        }
+    }
+
+    private static void runChatApp(Activity activity, AppChoice choice, String label, Consumer<String> reply) {
+        if (label == null) {
+            Intent launch = activity.getPackageManager().getLaunchIntentForPackage(choice.packageName);
+            if (launch != null && open(activity, launch, reply)) reply.accept(choice.label + "을 열었어요.");
+            else if (launch == null) reply.accept("선택한 앱을 열 수 없습니다.");
+            return;
+        }
+        if (!AppActionService.available()) {
+            new AlertDialog.Builder(activity).setTitle("TLA 앱 작업 접근성 설정")
+                .setMessage("다른 앱에서 버튼을 누르려면 Android 접근성 설정에서 TLA 앱 작업을 켜 주세요.")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("설정 열기", (dialog, which) ->
+                    open(activity, new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), reply)).show();
+            return;
+        }
+        try {
+            AgentAction action = new AgentAction(choice.packageName, label, AgentAction.Kind.CLICK);
+            new AlertDialog.Builder(activity).setTitle("앱 동작 승인")
+                .setMessage(choice + "\n\n" + action.label + " 버튼을 한 번 누를까요?")
+                .setNegativeButton("취소", (dialog, which) -> reply.accept("앱 작업을 취소했어요."))
+                .setPositiveButton("한 번 실행", (dialog, which) -> execute(activity, List.of(action), reply))
+                .show();
+        } catch (IllegalArgumentException error) {
+            reply.accept(error.getMessage());
+        }
+    }
+
+    private static String normalized(String label) { return label.replaceAll("\\s+", ""); }
+
+    private static void execute(Activity activity, List<AgentAction> plan, Consumer<String> reply) {
+        Intent launch = activity.getPackageManager().getLaunchIntentForPackage(plan.get(0).packageName);
         if (launch == null) {
-            status.setText("선택한 앱을 열 수 없습니다.");
+            reply.accept("선택한 앱을 열 수 없습니다.");
             return;
         }
         if (!AppActionService.begin(plan)) {
-            status.setText("화면 잠금이나 진행 중인 작업 때문에 시작할 수 없습니다.");
+            reply.accept("화면 잠금이나 진행 중인 작업 때문에 시작할 수 없습니다.");
             return;
         }
-        if (!open(launch)) AppActionService.stop("선택한 앱을 열지 못해 중단했습니다.");
+        if (!open(activity, launch, reply)) AppActionService.stop("선택한 앱을 열지 못해 중단했습니다.");
     }
 
     private boolean open(Intent intent) {
+        return open(this, intent, status::setText);
+    }
+
+    private static boolean open(Activity activity, Intent intent, Consumer<String> reply) {
         try {
-            startActivity(intent);
+            activity.startActivity(intent);
             return true;
         } catch (ActivityNotFoundException | SecurityException error) {
-            status.setText("이 작업을 열 수 있는 앱을 찾지 못했습니다.");
+            reply.accept("이 작업을 열 수 있는 앱을 찾지 못했습니다.");
             return false;
         }
     }
 
-    private List<AppChoice> launchableApps() {
+    private static List<AppChoice> launchableApps(Activity activity) {
         Intent filter = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         Set<String> seen = new HashSet<>();
         List<AppChoice> choices = new ArrayList<>();
-        for (ResolveInfo info : getPackageManager().queryIntentActivities(filter, 0)) {
+        for (ResolveInfo info : activity.getPackageManager().queryIntentActivities(filter, 0)) {
             String packageName = info.activityInfo.packageName;
-            if (!getPackageName().equals(packageName) && seen.add(packageName)) {
-                choices.add(new AppChoice(info.loadLabel(getPackageManager()).toString(), packageName));
+            if (!activity.getPackageName().equals(packageName) && seen.add(packageName)) {
+                choices.add(new AppChoice(info.loadLabel(activity.getPackageManager()).toString(), packageName));
             }
         }
         choices.sort(Comparator.comparing(choice -> choice.label, String.CASE_INSENSITIVE_ORDER));
