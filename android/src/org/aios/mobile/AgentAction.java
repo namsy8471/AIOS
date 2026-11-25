@@ -7,8 +7,14 @@ import android.net.Uri;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.accessibilityservice.GestureDescription;
 import java.util.ArrayDeque;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 final class AgentAction {
+    private static final Pattern GOOGLE_DESTINATION = Pattern.compile(
+        "^(?:구글|Google)[\\p{Zs}\\t]*(?:에서|에|로)(?=[\\p{Zs}\\t]|$)[\\p{Zs}\\t]*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SEARCH_SUFFIX = Pattern.compile(
+        "(?:^|[\\p{Zs}\\t]+)검색(?:[\\p{Zs}\\t]*해(?:[\\p{Zs}\\t]*(?:줘|주세요))?)?[.!?]*$");
     enum Kind {
         CLICK("버튼 누르기"), LEFT("왼쪽으로 스와이프"), RIGHT("오른쪽으로 스와이프");
 
@@ -40,6 +46,13 @@ final class AgentAction {
         Uri url = new Uri.Builder().scheme("https").authority("www.google.com")
             .path("/search").appendQueryParameter("q", field(query, 256)).build();
         return new Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE);
+    }
+
+    static String searchQuery(String command) {
+        String text = GOOGLE_DESTINATION.matcher(command.strip()).replaceFirst("");
+        if (text.startsWith("검색 ")) return text.substring(3).strip();
+        Matcher suffix = SEARCH_SUFFIX.matcher(text);
+        return suffix.find() ? text.substring(0, suffix.start()).strip() : null;
     }
 
     boolean owns(AccessibilityNodeInfo node) {

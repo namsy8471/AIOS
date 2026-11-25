@@ -9,8 +9,11 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.PathMeasure;
 import android.graphics.Rect;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.AlarmClock;
+import android.provider.Settings;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
@@ -67,9 +70,23 @@ public final class AgentActionProbe extends Activity {
             "Search intent did not preserve the explicit query");
         expectInvalid(() -> AgentAction.search(" "));
         expectInvalid(() -> new AgentAction(app.getPackageName(), "출석\n확인", AgentAction.Kind.CLICK));
+        for (String[] example : new String[][] {
+            {"구글에 네이버 검색 해줘", "네이버"},
+            {"구글에서 네이버 검색해 줘", "네이버"},
+            {"Google 에 네이버 검색 해 주세요.", "네이버"},
+            {"오늘 날씨 검색", "오늘 날씨"},
+            {"검색 구글에 네이버", "구글에 네이버"},
+            {"구글에서의 검색 기록 검색", "구글에서의 검색 기록"}
+        }) {
+            String parsed = AgentAction.searchQuery(example[0]);
+            require(example[1].equals(parsed), "Chat search split failed for " + example[0]);
+            require(example[1].equals(AgentAction.search(parsed).getData().getQueryParameter("q")),
+                "Chat search sent a different query");
+        }
 
         UiAutomation automation = probe.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         checkSearchApproval(probe, app, automation, query);
+        JSONObject controls = checkChatTools(probe, app, automation);
         AgentActionProbe fixture = (AgentActionProbe) probe.startActivitySync(
             new Intent(app, AgentActionProbe.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
@@ -125,6 +142,8 @@ public final class AgentActionProbe extends Activity {
                 require(fixture.attendance.get() == 2, "Timed out action clicked a button");
             }
             return new JSONObject().put("mode", "agent-actions").put("search_query_encoding", true).put("search_approval", true)
+                .put("chat_search_google_destination", true)
+                .put("phone_controls", controls)
                 .put("fixture_click", true).put("left_swipe", true).put("right_swipe", true)
                 .put("duplicate_blocked", true).put("wrong_app_blocked", true)
                 .put("real_accessibility_service", service).put("service_timeout_verified", service);
@@ -134,6 +153,96 @@ public final class AgentActionProbe extends Activity {
                 fixture.finish();
             });
         }
+    }
+
+    private static JSONObject checkChatTools(Instrumentation probe, Context app, UiAutomation automation) throws Exception {
+        require(PhoneControls.parse("설정에서 밝기 올려줘").target(100, 1, 255, 25) == 125, "Brightness increase failed");
+        require(PhoneControls.parse("화면 밝기 70%로 설정해 줘").target(100, 1, 255, 25) == 179, "Brightness percentage failed");
+        require(PhoneControls.parse("화면 밝기를 더 낮춰 줘!").target(10, 1, 255, 25) == 1, "Brightness minimum failed");
+        require(PhoneControls.parse("음량 줄여").target(6, 0, 15, 1) == 5, "Volume decrease failed");
+        int seconds = PhoneIntents.timerSeconds("2분 15초 타이머 설정해 줘");
+        require(seconds == 135 && PhoneIntents.timerIntent(seconds).getIntExtra(AlarmClock.EXTRA_LENGTH, 0) == 135,
+            "Timer length was not preserved");
+        require(Settings.ACTION_WIFI_SETTINGS.equals(PhoneIntents.openAction("와이파이 설정 열어줘")),
+            "Wi-Fi settings command did not resolve");
+        Activity screen = probe.startActivitySync(new Intent(app, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            View root = screen.getWindow().getDecorView();
+            EditText field = root.findViewWithTag("memo-instruction");
+            View send = root.findViewWithTag("memo-preview-button");
+            sendCommand(probe, field, send, "구글에 네이버 검색 해줘");
+            await(() -> {
+                AccessibilityNodeInfo active = automation.getRootInActiveWindow();
+                return active != null && app.getPackageName().equals(String.valueOf(active.getPackageName()))
+                    && active.findAccessibilityNodeInfosByText("네이버").stream()
+                        .anyMatch(node -> "Google에 보낼 검색어\n\n네이버".equals(String.valueOf(node.getText())));
+            }, "Search approval did not contain only the intended query");
+            clickLabel(automation, app.getPackageName(), "취소");
+
+            boolean approved = Settings.System.canWrite(app);
+            int brightness = Settings.System.getInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
+            int beforeMode = Settings.System.getInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
+                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            int percent = brightness < 128 ? 70 : 30;
+            sendCommand(probe, field, send, "설정에서 밝기 " + percent + "%로 설정해 줘");
+            String title = approved ? "화면 밝기 변경" : "화면 밝기 변경 권한";
+            root(automation, new AgentAction(app.getPackageName(), title, AgentAction.Kind.CLICK));
+            if (approved) {
+                try {
+                    clickLabel(automation, app.getPackageName(), "적용");
+                    await(() -> Settings.System.getInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, -1)
+                        == Math.round(255 * (percent / 100f)), "Brightness did not change on approval");
+                } finally {
+                    boolean restored = Settings.System.putInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, brightness);
+                    boolean modeRestored = Settings.System.putInt(app.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE, beforeMode);
+                    require(restored && modeRestored, "Brightness settings were not restored");
+                }
+            } else {
+                clickLabel(automation, app.getPackageName(), "취소");
+            }
+
+            Instrumentation.ActivityMonitor clock = probe.addMonitor(new IntentFilter(AlarmClock.ACTION_SET_TIMER),
+                new Instrumentation.ActivityResult(0, null), true);
+            try {
+                sendCommand(probe, field, send, "5분 타이머 맞춰줘");
+                clickLabel(automation, app.getPackageName(), "취소");
+                require(clock.getHits() == 0, "Cancelled timer reached the clock");
+                sendCommand(probe, field, send, "5분 타이머 맞춰줘");
+                clickLabel(automation, app.getPackageName(), "시작");
+                await(() -> clock.getHits() == 1, "Approved timer did not reach the clock");
+            } finally {
+                probe.removeMonitor(clock);
+            }
+            JSONObject results = new JSONObject().put("brightness_review_or_permission", true)
+                .put("brightness_applied_and_restored", approved).put("timer_approval", true)
+                .put("media_volume_applied_and_restored", false);
+
+            AudioManager audio = app.getSystemService(AudioManager.class);
+            int stream = AudioManager.STREAM_MUSIC;
+            int previous = audio.getStreamVolume(stream);
+            int max = audio.getStreamMaxVolume(stream);
+            if (audio.isVolumeFixed() || audio.getStreamMinVolume(stream) == max) return results;
+            int target = previous >= max ? previous - 1 : previous + 1;
+            try {
+                sendCommand(probe, field, send, target < previous ? "미디어 음량 낮춰줘" : "미디어 음량 올려줘");
+                root(automation, new AgentAction(app.getPackageName(), "미디어 음량 변경", AgentAction.Kind.CLICK));
+                clickLabel(automation, app.getPackageName(), "적용");
+                await(() -> audio.getStreamVolume(stream) == target, "Media volume did not change on approval");
+            } finally {
+                if (audio.getStreamVolume(stream) != previous) audio.setStreamVolume(stream, previous, 0);
+            }
+            require(audio.getStreamVolume(stream) == previous, "Original volume was not restored");
+            return results.put("media_volume_applied_and_restored", true);
+        } finally {
+            probe.runOnMainSync(screen::finish);
+        }
+    }
+
+    private static void sendCommand(Instrumentation probe, EditText field, View send, String command) {
+        probe.runOnMainSync(() -> {
+            field.setText(command);
+            send.performClick();
+        });
     }
 
     private static void checkSearchApproval(Instrumentation probe, Context app, UiAutomation automation, String query)

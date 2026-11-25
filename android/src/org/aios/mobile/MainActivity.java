@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final List<Button> controls = new ArrayList<>();
     private WorkspaceUi ui;
+    private PhoneControls phoneControls;
     private ScrollView page;
     private LinearLayout conversation;
     private LinearLayout welcome;
@@ -69,6 +70,7 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         engine = createEngine();
         ui = new WorkspaceUi(this);
+        phoneControls = new PhoneControls(this, result -> appendMessage(result, false));
         LinearLayout root = ui.screen();
         LinearLayout heading = ui.row();
         ui.pad(heading, 18, 8);
@@ -201,6 +203,11 @@ public class MainActivity extends Activity {
 
     MobileEngine createEngine() { return new MobileEngine(this); }
 
+    @Override protected void onResume() {
+        super.onResume();
+        phoneControls.resume();
+    }
+
     private void buildWelcome() {
         welcome = ui.column();
         ui.pad(welcome, 8, 16);
@@ -257,8 +264,13 @@ public class MainActivity extends Activity {
         appendMessage(text, true);
         getSystemService(android.view.inputmethod.InputMethodManager.class)
             .hideSoftInputFromWindow(instruction.getWindowToken(), 0);
-        String query = searchQuery(text);
-        if (query != null) {
+        PhoneControls.Command setting = PhoneControls.parse(text);
+        String query = AgentAction.searchQuery(text);
+        if (setting != null) {
+            phoneControls.review(setting);
+        } else if (PhoneIntents.handle(this, text, result -> appendMessage(result, false))) {
+            return;
+        } else if (query != null) {
             AgentActivity.confirmSearch(this, query, result -> appendMessage(result, false));
         } else if (text.equals("메모 보기") || text.equals("메모 보여줘")) {
             String stored = memo.getText().toString();
@@ -268,16 +280,8 @@ public class MainActivity extends Activity {
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
         } else {
-            appendMessage("메모 추가, 웹 검색, Windows 문서 작업을 요청할 수 있어요. 다른 앱을 조작하려면 도구에서 대상 앱과 동작을 선택해 주세요.", false);
+            appendMessage("밝기, 미디어 음량, 타이머, 카메라나 설정 열기, 메모와 웹 검색을 요청할 수 있어요. 다른 앱을 조작하려면 도구에서 대상 앱과 동작을 선택해 주세요.", false);
         }
-    }
-
-    private static String searchQuery(String text) {
-        if (text.startsWith("검색 ")) return text.substring(3);
-        for (String suffix : new String[] {" 검색해 줘", " 검색해줘", " 검색"}) {
-            if (text.endsWith(suffix)) return text.substring(0, text.length() - suffix.length());
-        }
-        return null;
     }
 
     private TextView label(String text, int size) {
