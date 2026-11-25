@@ -5,6 +5,8 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.GestureDescription;
 import android.app.KeyguardManager;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
@@ -54,16 +56,21 @@ public final class AppActionService extends AccessibilityService {
         final String goal;
         final boolean larger;
         final Consumer<String> reply;
+        final boolean visual;
         List<String> labels = List.of();
         int windowId = -1;
         Future<?> inference;
         AgentAction proposed;
+        int[] titleFrame;
+        boolean visualStarted;
+        boolean titleTapped;
 
         ScreenTask(String packageName, String goal, boolean larger, Consumer<String> reply) {
             this.packageName = packageName;
             this.goal = goal;
             this.larger = larger;
             this.reply = reply;
+            visual = ScreenVision.supports(packageName, goal);
         }
     }
 
@@ -172,7 +179,8 @@ public final class AppActionService extends AccessibilityService {
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.END;
         try {
@@ -251,7 +259,9 @@ public final class AppActionService extends AccessibilityService {
                     finishAction("화면이 바뀌어 제안한 동작을 취소했어요.");
                     return;
                 }
-                if (task.inference == null && window.isActive()) {
+                if (task.visual && !task.visualStarted && window.isActive()) {
+                    if (SystemClock.uptimeMillis() >= ends - TIMEOUT_MS + 3000) startVisualInspection(task, window);
+                } else if (!task.visual && task.inference == null && window.isActive()) {
                     List<String> labels = AgentAction.buttonLabels(root, task.packageName);
                     if (!labels.isEmpty()) chooseScreenProposal(task, window.getId(), labels);
                     else if (SystemClock.uptimeMillis() >= ends - TIMEOUT_MS + 3500) {
@@ -269,6 +279,133 @@ public final class AppActionService extends AccessibilityService {
         } else {
             finishAction("다른 화면이 열려 작업을 중단했어요.");
         }
+    }
+
+    private void startVisualInspection(ScreenTask task, AccessibilityWindowInfo window) {
+        task.visualStarted = true;
+        task.windowId = window.getId();
+        approvalWindow = task.windowId;
+        ends = SystemClock.uptimeMillis() + 55_000;
+        stopOverlay.setText("TLA 화면 읽는 중 · 중지");
+        capture(task, frame -> {
+            task.inference = plannerWorker.submit(() -> {
+                try {
+                    int[] appearance = ScreenVision.appearance(frame);
+                    ScreenVision.Scene scene = new ScreenVision(this).classify(frame);
+                    main.post(() -> showVisualResult(task, scene, appearance));
+                } catch (Exception unavailable) {
+                    main.post(() -> {
+                        if (screenTask == task) finishAction("로컬 비전 모델이 화면을 읽지 못했어요.");
+                    });
+                } finally {
+                    frame.recycle();
+                }
+            });
+        });
+    }
+
+    private void capture(ScreenTask task, Consumer<Bitmap> receive) {
+        if (android.os.Build.VERSION.SDK_INT < 34) {
+            finishAction("이 Android 버전은 앱 창 캡처를 지원하지 않아요.");
+            return;
+        }
+        takeScreenshotOfWindow(task.windowId, getMainExecutor(), new TakeScreenshotCallback() {
+            @Override public void onSuccess(ScreenshotResult screenshot) {
+                if (visualWindow(task) == null) {
+                    screenshot.getHardwareBuffer().close();
+                    if (screenTask == task) finishAction("앱 화면이 바뀌어 판독을 중단했어요.");
+                    return;
+                }
+                try {
+                    receive.accept(ScreenVision.copyFrame(screenshot));
+                } catch (Exception invalid) {
+                    finishAction("앱 창의 화면을 읽지 못했어요.");
+                }
+            }
+
+            @Override public void onFailure(int error) {
+                if (screenTask == task) finishAction(error == ERROR_TAKE_SCREENSHOT_SECURE_WINDOW
+                    ? "Android가 이 화면의 캡처를 보호하고 있어요." : "앱 창을 캡처하지 못했어요.");
+            }
+        });
+    }
+
+    private AccessibilityWindowInfo visualWindow(ScreenTask task) {
+        if (screenTask != task || !screenReady() || SystemClock.uptimeMillis() >= ends) return null;
+        AccessibilityNodeInfo root = approvalRoot();
+        if (root == null || root.getWindowId() != task.windowId
+                || !task.packageName.equals(String.valueOf(root.getPackageName()))) return null;
+        AccessibilityWindowInfo window = root.getWindow();
+        return window != null && window.isFocused() && window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION
+            ? window : null;
+    }
+
+    private void showVisualResult(ScreenTask task, ScreenVision.Scene scene, int[] appearance) {
+        if (screenTask != task) return;
+        if (visualWindow(task) == null) {
+            finishAction("앱 화면이 바뀌어 판독을 중단했어요.");
+        } else if (scene == ScreenVision.Scene.TERMS) {
+            finishAction("이용약관 확인 화면이에요. 화면에서 직접 확인해 주세요.");
+        } else if (scene == ScreenVision.Scene.TITLE && !task.titleTapped) {
+            task.titleFrame = appearance;
+            ends = SystemClock.uptimeMillis() + APPROVAL_MS;
+            stopOverlay.setText("TLA 중지");
+            continueOverlay.setText("타이틀 화면 누르기");
+            continueOverlay.setVisibility(View.VISIBLE);
+        } else {
+            finishAction(task.titleTapped ? "타이틀을 한 번 눌렀어요. 다음 화면에서 출석 완료를 확인하지 못했어요."
+                : "화면에서 출석으로 이어지는 동작을 확인하지 못했어요.");
+        }
+    }
+
+    private void applyVisualProposal(ScreenTask task) {
+        if (task.titleFrame == null || task.titleTapped) return;
+        int[] approvedFrame = task.titleFrame;
+        task.titleFrame = null;
+        continueOverlay.setVisibility(View.GONE);
+        stopOverlay.setText("TLA 화면 다시 확인 중 · 중지");
+        capture(task, frame -> {
+            try {
+                AccessibilityWindowInfo window = visualWindow(task);
+                if (window == null || !ScreenVision.sameAppearance(approvedFrame, ScreenVision.appearance(frame))) {
+                    finishAction("승인 전 화면이 바뀌어 타이틀을 누르지 않았어요.");
+                    return;
+                }
+                Rect bounds = new Rect();
+                window.getBoundsInScreen(bounds);
+                if (bounds.width() <= bounds.height() || bounds.width() != frame.getWidth() || bounds.height() != frame.getHeight()) {
+                    finishAction("게임 화면의 위치를 확인하지 못했어요.");
+                    return;
+                }
+                sendTitleTap(task, window, bounds);
+            } finally {
+                frame.recycle();
+            }
+        });
+    }
+
+    private void sendTitleTap(ScreenTask task, AccessibilityWindowInfo window, Rect bounds) {
+        task.titleTapped = true;
+        Path path = new Path();
+        path.moveTo(bounds.exactCenterX(), bounds.top + bounds.height() * 0.73f);
+        GestureDescription tap = new GestureDescription.Builder().setDisplayId(window.getDisplayId())
+            .addStroke(new GestureDescription.StrokeDescription(path, 0, 80)).build();
+        gesturing = dispatchGesture(tap, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription gesture) {
+                gesturing = false;
+                if (screenTask != task) return;
+                task.visualStarted = false;
+                task.windowId = -1;
+                approvalWindow = -1;
+                ends = SystemClock.uptimeMillis() + TIMEOUT_MS;
+            }
+
+            @Override public void onCancelled(GestureDescription gesture) {
+                gesturing = false;
+                if (screenTask == task) finishAction("타이틀 누르기가 취소됐어요.");
+            }
+        }, main);
+        if (!gesturing) finishAction("타이틀에 누르기 동작을 보낼 수 없었어요.");
     }
 
     private void chooseScreenProposal(ScreenTask task, int windowId, List<String> labels) {
@@ -324,6 +461,10 @@ public final class AppActionService extends AccessibilityService {
 
     private void applyScreenProposal() {
         ScreenTask task = screenTask;
+        if (task.visual) {
+            applyVisualProposal(task);
+            return;
+        }
         if (task.proposed == null) return;
         AccessibilityNodeInfo target = screenProposalTarget(task);
         if (target == null) {

@@ -6,4 +6,5 @@
     android:packageNames="org.aios.mobile"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
+    android:canTakeScreenshot="true"
     android:description="@string/app_action_description" />

@@ -40,6 +40,8 @@ public class MainActivity extends Activity {
     private static final int PICK_NOTES = 2;
     private static final int PICK_PC = 3;
     private static final int PICK_LARGE_MODEL = 4;
+    private static final int PICK_VISION_MODEL = 5;
+    private static final int PICK_VISION_PROJECTOR = 6;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final List<Button> controls = new ArrayList<>();
     private WorkspaceUi ui;
@@ -126,6 +128,10 @@ public class MainActivity extends Activity {
         modelChoice = selector("로컬 경량 모델", "로컬 대형 모델");
         button("선택한 로컬 모델 가져오기", () ->
             pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
+        if (new ScreenVision(this).installed()) {
+            button("화면 인식 모델 가져오기", () -> pick(PICK_VISION_MODEL, "*/*", false));
+            button("이미지 인코더 가져오기", () -> pick(PICK_VISION_PROJECTOR, "*/*", false));
+        }
         button("수동 앱 작업", () -> startActivity(new Intent(this, AgentActivity.class)));
         content = ui.card(settings);
         label("PC 연결", 18);
@@ -566,6 +572,14 @@ public class MainActivity extends Activity {
                 }
                 return null;
             }, ignored -> status.setText("로컬 모델 준비됨"));
+        } else if ((request == PICK_VISION_MODEL || request == PICK_VISION_PROJECTOR) && data.getData() != null) {
+            run("화면 인식 파일 가져오는 중", () -> {
+                try (InputStream model = getContentResolver().openInputStream(data.getData())) {
+                    if (model == null) throw new IOException("모델 파일을 열 수 없어요.");
+                    MobileEngine.importGguf(model, ScreenVision.weights(this, request == PICK_VISION_PROJECTOR));
+                }
+                return new ScreenVision(this).ready();
+            }, ready -> status.setText(ready ? "화면 인식 모델 준비됨" : "화면 인식 파일 저장됨"));
         } else if (request == PICK_PC && data.getData() != null) {
             run("PC 페어링 파일 읽는 중", () -> {
                 try (InputStream pairing = getContentResolver().openInputStream(data.getData())) {

@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string]$ModelRunner,
     [string]$OutDir = 'build/mobile-apk',
     [switch]$Probe,
-    [string]$BenchmarkRunner
+    [string]$BenchmarkRunner,
+    [string]$VisionRunner
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -18,6 +19,7 @@ if ($BenchmarkRunner) {
     if (!$Probe) { throw 'BenchmarkRunner requires a probe APK' }
     $BenchmarkRunner = (Resolve-Path -LiteralPath $BenchmarkRunner).Path
 }
+if ($VisionRunner) { $VisionRunner = (Resolve-Path -LiteralPath $VisionRunner).Path }
 $env:JAVA_HOME = $Jdk
 $javaBin = Join-Path $Jdk 'bin'
 $env:Path = "$javaBin;$env:Path"
@@ -74,7 +76,9 @@ with zipfile.ZipFile(stage / "unsigned.apk", "a", compression=zipfile.ZIP_DEFLAT
     apk.writestr("lib/arm64-v8a/libllama-runner.so", android_arm64(runner))
     if len(sys.argv) > 3 and sys.argv[3]:
         apk.writestr("lib/arm64-v8a/libllama-bench.so", android_arm64(pathlib.Path(sys.argv[3])))
-'@ | python - $stage $ModelRunner $BenchmarkRunner
+    if len(sys.argv) > 4 and sys.argv[4]:
+        apk.writestr("lib/arm64-v8a/libllama-vision.so", android_arm64(pathlib.Path(sys.argv[4])))
+'@ | python - $stage $ModelRunner $BenchmarkRunner $VisionRunner
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & (Join-Path $BuildTools 'zipalign.exe') -f 4 "$stage/unsigned.apk" "$stage/aligned.apk"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }

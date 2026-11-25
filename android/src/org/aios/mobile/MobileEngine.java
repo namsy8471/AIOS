@@ -118,7 +118,11 @@ final class MobileEngine {
     }
 
     void importWeights(InputStream input, boolean larger) throws IOException {
-        AtomicFile model = new AtomicFile(weights(larger));
+        importGguf(input, weights(larger));
+    }
+
+    static void importGguf(InputStream input, File destination) throws IOException {
+        AtomicFile model = new AtomicFile(destination);
         FileOutputStream output = model.startWrite();
         try {
             byte[] magic = new byte[4];
