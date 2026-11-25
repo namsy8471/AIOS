@@ -1,4 +1,4 @@
-/* Booted only in the disconnected reference-kernel VM. */
+/* Load a packaged module order on the reference kernel. */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -7,9 +7,14 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-int main(void) {
+int main(int argc, char **argv) {
+    const char *order = "/module-order";
+    if (argc == 2 && !strcmp(argv[1], "--without-touch"))
+        order = "/module-order-without-touch";
+    else if (argc != 1)
+        return 1;
     setvbuf(stdout, NULL, _IOLBF, 0);
-    FILE *list = fopen("/module-order", "r");
+    FILE *list = fopen(order, "r");
     if (!list) {
         perror("open module list");
         return 1;

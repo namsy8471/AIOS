@@ -131,57 +131,85 @@ static drmModeCrtc *find_crtc(int fd, const drmModeRes *resources, const drmMode
     return NULL;
 }
 
+struct display_target {
+    int fd;
+    drmModeConnector *connector;
+    drmModeCrtc *previous;
+    drmModeModeInfo mode;
+    enum panel_priority rank;
+};
+
+static void release_display(struct display_target *target) {
+    drmModeFreeCrtc(target->previous);
+    drmModeFreeConnector(target->connector);
+    if (target->fd >= 0)
+        close(target->fd);
+}
+
+static struct display_target find_display(void) {
+    struct display_target best = {.fd = -1};
+    glob_t cards = {0};
+    if (glob("/dev/dri/card[0-9]*", 0, NULL, &cards))
+        return best;
+    for (size_t i = 0; i < cards.gl_pathc && best.rank != PANEL_FLIP4_INNER; ++i) {
+        const char *index = cards.gl_pathv[i] + sizeof("/dev/dri/card") - 1;
+        if (index[strspn(index, "0123456789")])
+            continue;
+        int fd = open(cards.gl_pathv[i], O_RDWR | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        drmModeRes *resources = drmModeGetResources(fd);
+        for (int j = 0; resources && j < resources->count_connectors; ++j) {
+            drmModeConnector *connector = drmModeGetConnector(fd, resources->connectors[j]);
+            if (!connector)
+                continue;
+            if (connector->connection != DRM_MODE_CONNECTED || connector->count_modes < 1) {
+                drmModeFreeConnector(connector);
+                continue;
+            }
+            // Keep the first advertised mode unless the connector offers the Flip4 inner mode.
+            drmModeModeInfo mode = connector->modes[0];
+            enum panel_priority rank = panel_rank(connector->connector_type, mode.hdisplay, mode.vdisplay);
+            for (int m = 1; rank == PANEL_DSI && m < connector->count_modes; ++m) {
+                drmModeModeInfo current = connector->modes[m];
+                if (panel_rank(connector->connector_type, current.hdisplay, current.vdisplay) == PANEL_FLIP4_INNER) {
+                    mode = current;
+                    rank = PANEL_FLIP4_INNER;
+                }
+            }
+            drmModeCrtc *previous = rank > best.rank ? find_crtc(fd, resources, connector) : NULL;
+            if (!previous) {
+                drmModeFreeConnector(connector);
+                continue;
+            }
+            if (best.fd == fd)
+                best.fd = -1;
+            release_display(&best);
+            best = (struct display_target){fd, connector, previous, mode, rank};
+        }
+        drmModeFreeResources(resources);
+        if (best.fd != fd)
+            close(fd);
+    }
+    globfree(&cards);
+    return best;
+}
+
 int main(void) {
     int result = 1;
-    int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-        perror("open DRM card");
+    struct display_target target = find_display();
+    if (target.fd < 0) {
+        fprintf(stderr, "No connected DRM display with an available CRTC\n");
         return result;
     }
-    drmModeRes *resources = drmModeGetResources(fd);
-    drmModeConnector *connector = NULL;
-    drmModeCrtc *previous = NULL;
+    int fd = target.fd;
+    drmModeConnector *connector = target.connector;
+    drmModeCrtc *previous = target.previous;
+    drmModeModeInfo mode = target.mode;
     struct drm_mode_create_dumb buffer = {0};
     void *pixels = MAP_FAILED;
     uint32_t framebuffer = 0;
     int console = -1;
-    if (!resources || resources->count_crtcs < 1)
-        goto cleanup;
-    enum panel_priority rank = 0;
-    drmModeModeInfo mode = {0};
-    for (int index = 0; index < resources->count_connectors; ++index) {
-        drmModeConnector *candidate = drmModeGetConnector(fd, resources->connectors[index]);
-        if (!candidate)
-            continue;
-        if (candidate->connection == DRM_MODE_CONNECTED && candidate->count_modes > 0) {
-            // Keep the first advertised mode unless the connector offers the Flip4 inner mode.
-            drmModeModeInfo selected = candidate->modes[0];
-            enum panel_priority priority = panel_rank(candidate->connector_type, selected.hdisplay, selected.vdisplay);
-            if (priority == PANEL_DSI) {
-                for (int i = 1; i < candidate->count_modes; ++i) {
-                    drmModeModeInfo current = candidate->modes[i];
-                    if (panel_rank(candidate->connector_type, current.hdisplay, current.vdisplay) == PANEL_FLIP4_INNER) {
-                        selected = current;
-                        priority = PANEL_FLIP4_INNER;
-                        break;
-                    }
-                }
-            }
-            if (priority > rank) {
-                drmModeFreeConnector(connector);
-                connector = candidate;
-                mode = selected;
-                rank = priority;
-            }
-        }
-        if (candidate != connector)
-            drmModeFreeConnector(candidate);
-    }
-    if (!connector)
-        goto cleanup;
-    previous = find_crtc(fd, resources, connector);
-    if (!previous)
-        goto cleanup;
     uint32_t crtc = previous->crtc_id;
     buffer.width = mode.hdisplay;
     buffer.height = mode.vdisplay;
@@ -207,13 +235,13 @@ int main(void) {
             break;
         *newline = '\0';
         int confirm = request[0] != '\0';
-        struct touch_input touch;
+        struct touch_input touch = {0};
         int input = -1;
         int outcome = 1;
         if (!confirm)
             draw_frame(pixels, &buffer, -1);
         if (!confirm || !draw_confirmation(pixels, &buffer, request))
-            input = open_input(&touch, rank);
+            input = open_input(&touch, target.rank);
         if (input >= 0 &&
             !drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode)) {
             printf("%s %ux%u\n", confirm ? "AIOS_CONFIRM_READY" : "AIOS_FRAME_READY",
@@ -244,11 +272,8 @@ cleanup:
         struct drm_mode_destroy_dumb destroy = {.handle = buffer.handle};
         drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
     }
-    drmModeFreeCrtc(previous);
-    drmModeFreeConnector(connector);
-    drmModeFreeResources(resources);
+    release_display(&target);
     if (console >= 0)
         close(console);
-    close(fd);
     return result;
 }

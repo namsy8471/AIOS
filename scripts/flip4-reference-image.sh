@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Assemble an unsigned reference image and boot its extracted payloads in QEMU.
 set -euo pipefail
-driver_only=false
-if [[ ${1:-} == --driver-image ]]; then
-  driver_only=true
+mode=${1:-}
+if [[ $mode == --driver-image || $mode == --board-image || $mode == --board-probe || $mode == --native-document ]]; then
   reference=${2:?Pass the community recovery image}
-  document_ramdisk=${3:?Pass the extracted AIOS document ramdisk}
+  document_ramdisk=${3:?Pass the AIOS initramfs}
   out=${4:?Pass a new output directory}
 else
   reference=${1:?Pass the community recovery image}
@@ -42,18 +41,43 @@ assemble() {
 }
 
 assemble_driver_image() {
-  local destination=$1 layout=$2
+  local destination=$1 layout=$2 image_name=$3
+  shift 3
   mkdir -p "$destination"
-  python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay
+  python3 tests/flip4_module_probe.py "$reference" "$stage/module-overlay" --overlay "$@"
   # The kernel unpacks both members into the same initramfs tree.
   cat "$document_ramdisk" "$stage/module-overlay/drivers.cpio.gz" > "$stage/document-with-drivers.cpio.gz"
-  assemble "$stage/document-with-drivers.cpio.gz" "$destination/document-with-drivers.img" \
+  assemble "$stage/document-with-drivers.cpio.gz" "$destination/$image_name" \
     "$layout" "$destination/payload"
   cp "$stage/module-overlay/order.txt" "$destination/order.txt"
+  if [[ -f $stage/module-overlay/order-without-touch.txt ]]; then
+    cp "$stage/module-overlay/order-without-touch.txt" "$destination/order-without-touch.txt"
+  fi
 }
 
-if "$driver_only"; then
-  assemble_driver_image "$out" "$out/layout.json"
+if [[ $mode == --native-document ]]; then
+  echo "2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  $reference" | sha256sum -c -
+  python3 scripts/flip4-touch-policy.py "$stage/reference/dtb" "$stage/reference/recovery_dtbo" \
+    "$stage/policy.dtbo" > "$out/touch-policy.json"
+  mv "$stage/policy.dtbo" "$stage/reference/recovery_dtbo"
+  assemble_driver_image "$out" "$out/layout.json" aios-flip4-native-document-unsigned.img --board-overlay
+  exit
+fi
+
+if [[ $mode == --board-probe ]]; then
+  assemble_driver_image "$out" "$out/layout.json" aios-flip4-board-probe-unsigned.img --board-overlay
+  exit
+fi
+
+if [[ $mode == --board-image ]]; then
+  assemble_driver_image "$out" "$out/layout.json" document-with-drivers.img --board-overlay
+  python3 scripts/flip4_board.py "$out/payload" "$out/order.txt" "$stage/module-overlay/recovery-files.txt" "$out"
+  python3 scripts/inspect-phone-kernel.py "$out/payload/kernel" > "$out/kernel.json"
+  exit
+fi
+
+if [[ $mode == --driver-image ]]; then
+  assemble_driver_image "$out" "$out/layout.json" document-with-drivers.img
   exit
 fi
 
@@ -80,7 +104,7 @@ fi
 cp "$stage/console-1.log" "$out/document-first-boot.log"
 cp "$stage/console-2.log" "$out/document-second-boot.log"
 
-assemble_driver_image "$stage/document-with-drivers" "$out/document-driver-layout.json"
+assemble_driver_image "$stage/document-with-drivers" "$out/document-driver-layout.json" document-with-drivers.img
 mkdir "$stage/driver-test"
 cp "$bundle/split-starter.raw" "$stage/driver-test/work.raw"
 if ! timeout 120s python3 tests/flip4_split_disk.py "$bundle" "$stage/driver-test/work.raw" \

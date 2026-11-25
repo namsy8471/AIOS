@@ -94,13 +94,55 @@ python3 arm64_model.py work.raw --show
 
 실물 SM-F721N에서 `scripts/flip4-driver-dependencies.ps1`을 실행하면 현재 커널에 로드된 화면·터치 모듈의 의존 관계를 읽습니다. 커뮤니티 소스에는 Qualcomm DRM과 두 터치 드라이버가 있습니다. 실물과 참조 이미지의 설정은 `python scripts/inspect-phone-kernel.py kernel --running-config physical-kernel.config.gz`로 비교할 수 있습니다. 조사한 두 커널에서 모듈 심벌 버전 검사가 켜져 있으므로, 모듈을 포함할 이미지는 대상 커널과 심벌 호환성을 확인해야 합니다. [Qualcomm DRM 소스](https://github.com/samsung-sm8475/android_vendor_qcom_opensource_display-drivers/tree/5b21c06f065d5f19817aeac45c3195bb6a07d7a6/msm) · [안쪽 화면 터치 소스](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/tree/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/stm_fst2ca78y_i2c) · [커버 화면 터치 소스](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/tree/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/touchscreen_fold/zinitix)
 
+삼성의 SM-F721N 업데이트 공지는 `F721NKSU8IZJC`를 Android 16의 2026년 11월 12일 빌드로 안내합니다. 삼성 오픈소스 목록에는 같은 기종의 Android 16 소스와 이전 `F721NKSS8IZH2` 항목이 있습니다. `F721NKSU8IZJC` 정확 일치 검색 결과는 0건이므로, 이 빌드에 대응하는 커널 소스와 모듈은 확보가 필요합니다. [삼성 업데이트 공지](https://doc.samsungmobile.com/SM-F721N/024156220825/kor.html) · [삼성 오픈소스 빌드 검색](https://opensource.samsung.com/uploadSearch?searchValue=F721NKSU8IZJC)
+
+실물의 커널 릴리스는 `5.10.252-android12-9-31998796-abF721NKSU8IZJC`입니다. 공개 TWRP V2 램디스크에서 추출한 `msm_drm.ko`, `fst2ca78y_i2c.ko`, `zinitix_ts.ko`, `ufs_qcom.ko`는 모두 `5.10.168-android12-9-gki-27941020-abF721BXXS4EWL5`로 시작하고 `modversions`를 포함하는 `vermagic`을 선언합니다. 현재 모듈 로드 증거는 참조 커널의 QEMU 결과이며, 실기 펌웨어와의 심벌 호환성은 별도 확인이 필요합니다. [참조 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
+
+공개 복구 이미지의 보드 모듈 ABI를 오프라인에서 기록하려면 `python3 tests/flip4_module_probe.py recovery.img build/flip4/abi --abi-only --board-overlay`를 실행합니다. 이 작업에는 `unpack_bootimg`, `cpio`, `readelf`가 필요합니다. `abi.json`에는 모듈 해시, `vermagic`, 필요한 심벌의 CRC가 들어갑니다. 대상 빌드의 `Module.symvers`가 있으면 `--module-symvers Module.symvers`로 누락 심벌과 CRC 불일치를 대조할 수 있습니다. 이 대조는 비교 파일에 수록된 심벌에 한정되며, 드라이버 로드와 실기 동작은 별도 검증 항목입니다.
+
 Windows에서 실제 펌웨어를 확인하려면 USB 디버깅이 허용된 플립4를 연결한 뒤 `scripts/flip4-inventory.ps1`을 실행합니다. 스크립트는 USB 기기 한 대를 선택해 모델과 빌드 번호, 보안 패치 버전, Android가 보고한 부트로더 잠금·Verified Boot 상태를 읽습니다. 펌웨어가 노출한 기기 트리 값도 함께 기록합니다. [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
 
 `python scripts/inspect-flip4-boot-image.py recovery.img`는 압축을 푼 Android 헤더 v2 파일에서 각 구성 요소의 위치·크기·SHA-256과 AVB 푸터 위치를 읽습니다. 커뮤니티 TWRP V2 이미지에서 확인한 페이지 크기는 4096바이트이며, 커널·DTB·복구 DTBO의 해시는 프로젝트에서 별도로 조사한 참조 파일들과 일치합니다. 푸터 검사는 파일 범위를 확인하며, 서명 검증과 실기기 호환성 판단에는 별도 증거가 필요합니다. [검사한 커뮤니티 복구 이미지](https://github.com/rainbowdashh/android_device_samsung_b4q/releases/tag/V2)
 
+### 플립4 CAPE 보드 후보 빌드
+
+고정된 TWRP V2 복구 이미지와 AIOS 문서 램디스크를 사용해 오프라인 후보를 만들 수 있습니다. Linux ARM64에서 `cpio`, `device-tree-compiler`, `gcc`, `libc6-dev`, `mkbootimg`, Python 3가 필요합니다. 교차 빌드에서는 정적 ARM64 C 컴파일러를 `CC`로 지정합니다.
+
+```sh
+bash scripts/flip4-reference-image.sh --board-image recovery.img document-init.cpio.gz build/flip4/reference-board
+```
+
+`flip4-reference-board-candidate`에는 Android v2 참조 이미지, 구성 요소 해시 `layout.json`, 램디스크의 모듈 로드 순서 `order.txt`, 병합한 `merged.dtb`와 조사 결과 `board.json`, 참조 커널 설정 `kernel.json`, QEMU의 두 부팅 로그와 문서 저장·복원 결과가 들어갑니다. 빌드에서 DTB 0번과 DTBO 테이블 9번의 SoC ID와 보드 리비전 범위를 확인하고, 원본 DTB·DTBO 테이블을 부팅 이미지에 보존합니다. 병합본은 오프라인 조사에 사용합니다. 후보에 포함된 문서 램디스크의 드라이버 로더와 디스크 선택은 현재 QEMU용 커널 인자에 의존합니다.
+
+병합본에는 안쪽 `B4_S6E3FAC_AMF670BS01`과 커버 `B4_S6E36W3_AMB190ZB01` 패널, STM 및 Zinitix 터치, CAPE PHY를 참조하는 UFS 컨트롤러가 선언돼 있습니다. 보드 후보는 QEMU에서 로드한 80개 모듈에 터치 I²C, UFS PHY, CAPE 클록과 핀 제어 및 그 모듈 의존성을 더해 88개를 패키징합니다. `board.json`은 터치 노드가 선언한 펌웨어와 원본 복구 램디스크에서 검색된 경로를 기록합니다. 고정된 복구 램디스크에는 두 터치 펌웨어 경로가 모두 없습니다. 실기에서 필요한 펌웨어 확보, 드라이버 바인딩, 화면·터치 동작과 UFS 저장은 별도 검증이 필요합니다.
+
+### 플립4 초기 부팅 진단
+
+`flip4-board-diagnostics`의 서명되지 않은 참조 이미지는 Android나 문서 디스크 없이 Linux/Rust PID 1을 실행합니다. PID 1은 CAPE SoC 530과 플립4의 터치·디스플레이·UFS 노드를 실행 중인 기기 트리에서 확인한 뒤 참조 모듈을 로드합니다. 커널이 등록한 DRM, 입력, 블록 장치의 번호와 화면 상태를 읽어 직렬 콘솔과 커널 로그에 기록합니다. 진단은 블록 장치를 열지 않습니다. 커널이 pmsg를 제공하면 초기 램디스크 안에 pmsg 문자 장치만 만들고 진단 스냅샷을 예약 RAM에 기록합니다.
+
+`qemu-proof.json`과 부팅 로그는 QEMU의 가상 기기 트리에서 수행한 진단 검증입니다. QEMU의 별도 ramoops 실행은 웜 리부트 뒤 스냅샷을 읽어 원래 보고와 대조합니다. QEMU에서는 명시적인 테스트 인자가 있는 부팅에서만 모듈을 로드합니다. 실기 진단은 초기 장치 탐색 중 펌웨어를 갱신할 수 있는 STM·Zinitix 모듈을 제외한 순서를 사용합니다. 같은 순서를 QEMU에서도 검증합니다. 실기기에서 모듈이 바인딩되는지와 로그를 회수할 수 있는지는 별도 검증이 필요합니다. [STM 갱신 경로](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/stm_fst2ca78y_i2c/stm_fw.c#L1048) · [Zinitix 갱신 경로](https://github.com/samsung-sm8475/android_kernel_samsung_sm8475/blob/b04999acacba1a4f7797cb7d402b0fefe153bba9/drivers/input/sec_input/touchscreen_fold/zinitix/ztw522/zinitix_ts.c#L1735)
+
+두 펌웨어 이름은 공개 커뮤니티 B4Q 파일과 일치합니다. STM 터치용 `fst2ca78y_b4.bin`의 SHA-256은 `6a72cf52fba1b156008fa384eb2e8c8db44321d593a6c97b0e3cacdc6a6c00cb`이고, 커버 터치용 `ztw522_b4.bin`은 `c6aa076fe2741b2cadf975abdf8e40d22e8776b0385aebc0d077d0ca618482ae`입니다. 실물 펌웨어와의 호환성은 확인이 필요하며 두 파일은 AIOS 진단 이미지에 포함되지 않습니다. [STM 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_stm/fst2ca78y_b4.bin) · [Zinitix 파일](https://github.com/samsung-sm8475-dev/proprietary_vendor_samsung_b4q/blob/2e806fb410592af4b913436057bd29b694e51b0c/proprietary/vendor/firmware/tsp_zinitix/ztw522_b4.bin)
+
+### 플립4 네이티브 문서 후보
+
+네이티브 문서 램디스크는 `work=<파티션 이름>:<ext4 UUID>`와 `model=<파티션 이름>:<ext4 UUID>` 두 줄을 빌드 시 받습니다. `scripts/flip4-native-volumes.sh`는 두 개의 일반 파일 ext4 이미지와 이 설정을 만듭니다. 실기 후보는 플립4 UFS 컨트롤러 아래의 지정된 파티션만 선택합니다. 모델을 읽기 전용으로 마운트하고, 작업 볼륨도 읽기 전용으로 먼저 열어 `.aios-work-volume`과 `note.txt`를 확인한 뒤에만 쓰기 모드로 다시 엽니다.
+
+```sh
+bash scripts/flip4-native-volumes.sh model-source.ext4 build/native-volumes sda2 sda1
+bash scripts/arm64-early-init.sh kernel build/native-init flip4-native-document build/native-volumes/volumes.conf display-root
+bash scripts/flip4-reference-image.sh --native-document recovery.img build/native-init/native-document-init.cpio.gz build/native-image
+```
+
+위 파티션 이름은 가상 테스트 배치의 예시입니다. 화면을 포함할 때 사용할 `display-root`는 `flip4-native-storage-proof` 아티팩트의 `display-root.tar.gz`를 풀어 준비합니다. ARM64 화면 실행기, 글꼴과 동적 라이브러리가 들어 있습니다. 저장 시험은 이 화면 구성 요소를 포함한 램디스크를 부팅해 메모 복원을 확인합니다. 실제 화면 표시와 터치는 별도로 검증합니다.
+
+고정 복구 이미지의 DTBO 9에만 두 터치 노드의 `bringup=1`과 빈 펌웨어 이름을 기록하고, 병합 후 같은 설정인지 확인합니다. PID 1은 실제 적용된 트리와 펌웨어 검색 경로를 읽어 확인 조건을 만족할 때만 터치 모듈을 로드합니다. 터치 펌웨어 바이너리는 포함하지 않습니다. 실기 부트로더가 이 오버레이를 적용하는지와 터치 드라이버의 동작은 실제 장치에서 확인해야 합니다.
+
 ### 플립4 커널로 가상 메모장 실행
 
 **Flip4 reference kernel probe**의 `flip4-reference-unsigned` 묶음에는 `aios-flip4-document-reference-unsigned.img`가 있습니다. Android v2 컨테이너에서 꺼낸 커널과 AIOS 램디스크로 QEMU를 두 번 부팅합니다. 첫 부팅에서 별도 가상 디스크에 메모를 저장하고 이전 버전으로 보낸 요청이 거절되는지 확인합니다. 두 번째 부팅에서 저장한 본문과 해시를 대조합니다. 증거는 `document-proof.json`과 두 부팅 로그에 있습니다. 이 이미지의 플립4 실기 부팅은 검증이 남아 있습니다.
+
+[드라이버와 로컬 모델을 함께 검증한 실행](https://github.com/namsy8471/AIOS/actions/runs/45425116253)의 `flip4-reference-drivers-model-proof`에는 같은 램디스크로 두 번 부팅해 모듈 80개를 매번 로드한 로그가 있습니다. 두 부팅에서 모델 파티션이 읽기 전용으로 마운트됐고, 실행기는 저장 전과 각 부팅 후 파티션의 SHA-256을 대조했습니다. 첫 부팅에서 모델이 추가한 `우유`는 두 번째 부팅에서 같은 문서 해시로 복원됐습니다. 이 검증은 QEMU 콘솔에서 실행됐습니다.
 
 게스트 내부에서 Qwen2.5-0.5B 추론을 실행하려면 같은 워크플로 실행의 `flip4-guest-model-disk`와 `flip4-virtual-disk`를 한 폴더에 풉니다. Linux에서 `sha256sum -c MODEL_SHA256SUMS`로 검사하고 `cp split-model-starter.raw work.raw`로 작업용 디스크를 만듭니다. `python3 flip4_model.py work.raw --split-disk --guest-model --instruction "메모에 '우유'를 적어줘."`를 실행하면 게스트가 읽기 전용 시스템의 모델을 사용하고 별도 문서 파티션에 결과를 저장합니다. 표준 오류의 `inference_ms`는 모델 프로세스 시작부터 결과 검증까지의 게스트 경과 시간이며, `model_peak_rss_kib`는 해당 프로세스의 최대 상주 메모리입니다. 종료 후 `python3 flip4_model.py work.raw --split-disk --show`로 저장 내용을 읽습니다.
 
@@ -120,9 +162,9 @@ python3 flip4_model.py work.raw --show
 
 ### ARM64 그래픽 메모장
 
-**Boot and save contract** 수동 실행의 `aios-arm64-display-package`를 압축 해제합니다. Python과 SDL을 지원하는 QEMU가 실행 경로에 있으면 묶음 폴더에서 `python arm64_touch.py work.raw`를 실행합니다. 터미널에서 추가할 문구를 입력하고 QEMU 창에서 저장 또는 취소를 선택합니다. 빈 줄로 종료한 뒤 같은 작업 디스크로 다시 열면 저장된 메모가 먼저 표시됩니다. 이 그래픽 묶음은 Alpine 커널과 VirtIO 가상 그래픽을 사용합니다.
+**Boot and save contract** 수동 실행의 `aios-arm64-display-package`를 압축 해제합니다. Python과 SDL을 지원하는 QEMU가 실행 경로에 있으면 묶음 폴더에서 `python arm64_touch.py work.raw`를 실행합니다. 터미널에서 추가할 문구를 입력하고 QEMU 창에서 저장 또는 취소를 선택합니다. 빈 줄로 종료한 뒤 같은 작업 디스크로 다시 열면 저장된 메모가 먼저 표시됩니다. 이 그래픽 묶음은 Alpine 커널과 VirtIO 가상 그래픽을 사용합니다. 화면을 처음 열 때 AIOS는 sysfs의 장치 번호로 필요한 DRM·입력 장치 파일을 준비합니다. 화면 프로그램은 연결된 DRM 출력을 검색하며, 1080×2640 DSI 안쪽 화면에서는 삼성 안쪽 터치 장치의 단일 손가락 입력을 사용합니다.
 
-`/opt/model`에 모델과 실행기가 들어 있는 신뢰할 수 있는 ext4 이미지를 가지고 있다면 `python arm64_touch.py work.raw --model-source model.raw`로 연결합니다. 모델 디스크는 읽기 전용으로 연결되며 메모는 `work.raw`에 저장됩니다.
+`/opt/model`에 모델과 실행기가 들어 있는 신뢰할 수 있는 ext4 이미지를 가지고 있다면 `python arm64_touch.py work.raw --model-source model.raw`로 연결합니다. 모델 디스크는 읽기 전용으로 연결되며 메모는 `work.raw`에 저장됩니다. 화면 확인을 요청하면 로컬 모델이 `append_line` JSON 도구를 제안합니다. AIOS가 대상 메모와 현재 문서 해시를 붙이고, 터치 후 저장 직전에 문서가 바뀌었는지 확인합니다. 수동 워크플로의 모델·화면 검증은 실제 모델의 두 제안에 대해 터치 취소와 승인을 각각 실행하고, 메모 복원 및 모델 디스크의 SHA-256을 대조합니다.
 
 ### x86_64 부팅 데모
 

@@ -24,6 +24,7 @@ jobs:
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/bundle disk
             cp build/flip4/kernel scripts/flip4_model.py scripts/arm64_model.py scripts/model_mvp.py build/flip4/bundle/
             bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/split split-disk
+            bash scripts/arm64-early-init.sh build/flip4/kernel build/flip4/board-probe-init flip4-board-probe
             cp build/flip4/split/split.raw build/flip4/bundle/split-starter.raw
             timeout 90s python3 tests/flip4_split_disk.py build/flip4/bundle build/flip4/split/split.raw > build/flip4/split/proof.json
             cd build/flip4/bundle
@@ -52,6 +53,78 @@ jobs:
         with:
           name: flip4-virtual-disk
           path: build/flip4/bundle/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-board-probe-init
+          path: build/flip4/board-probe-init/board-probe-init.cpio.gz
+          if-no-files-found: error
+  board-candidate:
+    needs: probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-reference-unsigned
+          path: build/flip4/reference-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-virtual-disk
+          path: build/flip4/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: flip4-board-probe-init
+          path: build/flip4/board-probe-init
+      - name: Build the offline CAPE board candidate
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cpio device-tree-compiler gcc libc6-dev mkbootimg qemu-system-arm
+          bundle=build/flip4
+          recovery="$bundle/recovery.img"
+          (cd "$bundle/reference-image" && sha256sum -c SHA256SUMS)
+          (cd "$bundle/bundle" && sha256sum -c SHA256SUMS)
+          curl -fsSL --retry 3 https://github.com/rainbowdashh/android_device_samsung_b4q/releases/download/V2/twrp_b4q_V2.img -o "$recovery"
+          echo "2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  $recovery" | sha256sum -c -
+          unpack_bootimg --boot_img "$bundle/reference-image/aios-flip4-document-reference-unsigned.img" --out "$bundle/document"
+          bash scripts/flip4-reference-image.sh --board-image "$recovery" \
+            "$bundle/document/ramdisk" "$bundle/reference-board"
+      - name: Test the board module set and document persistence on QEMU virt
+        run: |
+          bundle=build/flip4/bundle
+          board=build/flip4/reference-board
+          cp --sparse=always "$bundle/split-starter.raw" "$board/work.raw"
+          timeout 180s python3 tests/flip4_split_disk.py "$bundle" "$board/work.raw" "$board/payload" \
+            --driver-order "$board/order.txt" > "$board/proof.json"
+      - name: Verify the diskless board diagnostic on QEMU virt
+        run: |
+          bundle=build/flip4
+          probe="$bundle/native-board-probe"
+          bash scripts/flip4-reference-image.sh --board-probe "$bundle/recovery.img" \
+            "$bundle/board-probe-init/board-probe-init.cpio.gz" "$probe"
+          timeout 120s python3 tests/flip4_board_boot.py "$probe" > "$probe/qemu-proof.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-board-diagnostics
+          path: |
+            build/flip4/native-board-probe/aios-flip4-board-probe-unsigned.img
+            build/flip4/native-board-probe/layout.json
+            build/flip4/native-board-probe/order.txt
+            build/flip4/native-board-probe/order-without-touch.txt
+            build/flip4/native-board-probe/qemu-proof.json
+            build/flip4/native-board-probe/console-*.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flip4-reference-board-candidate
+          path: |
+            build/flip4/reference-board/document-with-drivers.img
+            build/flip4/reference-board/layout.json
+            build/flip4/reference-board/order.txt
+            build/flip4/reference-board/board.json
+            build/flip4/reference-board/kernel.json
+            build/flip4/reference-board/merged.dtb
+            build/flip4/reference-board/proof.json
+            build/flip4/reference-board/console-*.log
   driver-modules:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 8
@@ -60,11 +133,14 @@ jobs:
       - name: Inspect normal module loading on the isolated reference kernel
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cpio gcc libc6-dev mkbootimg qemu-system-arm
+          sudo apt-get install -y binutils cpio gcc libc6-dev mkbootimg qemu-system-arm
           mkdir -p build/flip4
           curl -fsSL --retry 3 https://github.com/rainbowdashh/android_device_samsung_b4q/releases/download/V2/twrp_b4q_V2.img -o build/flip4/recovery.img
           echo '2c1690936c2ce795da109d0796cc9b003eebcaa3b2da6dbc016e1c2331d0ee84  build/flip4/recovery.img' | sha256sum -c -
           python3 tests/flip4_module_probe.py build/flip4/recovery.img build/flip4/driver-probe
+      - name: Record the reference board modules' required symbol versions
+        run: |
+          python3 tests/flip4_module_probe.py build/flip4/recovery.img build/flip4/driver-probe --abi-only --board-overlay
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -123,7 +199,7 @@ jobs:
         with:
           name: flip4-reference-unsigned
           path: build/flip4/reference-image
-      - run: sudo apt-get update -qq && sudo apt-get install -y cpio gcc libc6-dev qemu-system-arm e2fsprogs mkbootimg ninja-build parted
+      - run: sudo apt-get update -qq && sudo apt-get install -y binutils cpio device-tree-compiler gcc libc6-dev qemu-system-arm e2fsprogs libdrm-dev libfreetype-dev mkbootimg ninja-build parted pkg-config
       - run: bash scripts/flip4-model-disk.sh build/flip4 build/flip4/split-model-starter.raw
       - name: Infer and save in the disconnected ARM64 guest
         run: |
@@ -182,6 +258,50 @@ jobs:
             build/flip4/reference-drivers-model/proof.json
             build/flip4/reference-drivers-model/layout.json
             build/flip4/reference-drivers-model/console-*.log
+      - name: Reject the wrong Flip4 volume and reopen a saved document after reboot
+        run: |
+          bundle=build/flip4
+          proof="$bundle/native-storage"
+          target=target/aarch64-unknown-linux-musl/release
+          mkdir -p "$proof" "$target"
+          gzip -dc "$bundle/reference-model/payload/ramdisk" |
+            cpio -i --quiet --to-stdout init > "$target/aios"
+          test -s "$target/aios"
+          bash scripts/arm64-display-root.sh "$proof/display-root"
+          sudo chroot "$proof/display-root" /lib/ld-linux-aarch64.so.1 --list /usr/bin/display-frame
+          dd if="$bundle/split-model-starter.raw" of="$proof/model-source.ext4" bs=1M skip=1 count=768 conv=sparse status=none
+          bash scripts/flip4-native-volumes.sh "$proof/model-source.ext4" "$proof/volumes" sda2 sda1
+          sed 's/^work=sda2:.*/work=sda2:11111111-1111-4111-8111-111111111111/' \
+            "$proof/volumes/volumes.conf" > "$proof/wrong.conf"
+          for profile in valid invalid; do
+            settings="$proof/volumes/volumes.conf"
+            display_root="$proof/display-root"
+            if [[ $profile == invalid ]]; then
+              settings="$proof/wrong.conf"
+              display_root=''
+            fi
+            sudo bash scripts/arm64-early-init.sh "$bundle/kernel" "$proof/$profile-init" \
+              flip4-native-document "$settings" "$display_root"
+            bash scripts/flip4-reference-image.sh --native-document "$bundle/recovery.img" \
+              "$proof/$profile-init/native-document-init.cpio.gz" "$proof/$profile"
+          done
+          truncate -s 786M "$proof/disk.raw"
+          parted -s "$proof/disk.raw" mklabel msdos mkpart primary ext4 1MiB 769MiB mkpart primary ext4 769MiB 785MiB
+          dd if="$proof/volumes/model.ext4" of="$proof/disk.raw" bs=1M seek=1 conv=notrunc,sparse status=none
+          dd if="$proof/volumes/work.ext4" of="$proof/disk.raw" bs=1M seek=769 conv=notrunc,sparse status=none
+          timeout 300s python3 tests/flip4_native_storage.py "$bundle" "$proof/valid" "$proof/invalid" "$proof/disk.raw" "$proof" > "$proof/proof.json"
+          tar -C "$proof/display-root" -czf "$proof/display-root.tar.gz" usr lib
+          (cd "$proof" && sha256sum display-root.tar.gz > display-root.sha256)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flip4-native-storage-proof
+          path: |
+            build/flip4/native-storage/proof.json
+            build/flip4/native-storage/*.log
+            build/flip4/native-storage/*/touch-policy.json
+            build/flip4/native-storage/display-root.tar.gz
+            build/flip4/native-storage/display-root.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: flip4-guest-inference

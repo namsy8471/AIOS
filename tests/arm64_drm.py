@@ -1,4 +1,5 @@
 """Verify Linux probe results for a booted ARM64 DRM device and absolute pointer."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -8,9 +9,20 @@ import sys
 import time
 
 
-bundle, initramfs, disk, output = map(Path, sys.argv[1:5])
-local_model = "--model" in sys.argv[5:]
-multitouch = "--multitouch" in sys.argv[5:]
+parser = argparse.ArgumentParser(description=__doc__)
+for name in ("bundle", "initramfs", "disk", "output"):
+    parser.add_argument(name, type=Path)
+model_options = parser.add_mutually_exclusive_group()
+model_options.add_argument("--model", action="store_true")
+model_options.add_argument("--model-source", type=Path)
+parser.add_argument("--multitouch", action="store_true")
+options = parser.parse_args()
+bundle, initramfs, disk, output = options.bundle, options.initramfs, options.disk, options.output
+model_source = options.model_source
+if model_source is not None and (not model_source.is_file() or (disk.exists() and disk.samefile(model_source))):
+    parser.error("provide a separate model source image")
+local_model = options.model or model_source is not None
+multitouch = options.multitouch
 monitor = disk.with_suffix(".qmp")
 sys.path.insert(0, str(bundle.resolve()))
 from arm64_model import command, read_document, wait
@@ -18,7 +30,34 @@ from arm64_touch import launch
 
 
 args = launch(bundle, disk, display="none", model=local_model, multitouch=multitouch,
-              monitor=f"unix:{monitor},server=on,wait=off", initramfs=initramfs)
+              monitor=f"unix:{monitor},server=on,wait=off", initramfs=initramfs, model_source=model_source)
+
+
+def sha256(path):
+    with path.open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
+model_hash = sha256(model_source) if model_source else None
+
+
+def model_proposal(vm, log, revision):
+    instruction = "메모에 '우유'를 적어줘."
+    start = log.tell()
+    ready = command(vm, log, f"model-confirm-append {revision} {instruction}", "AIOS_")
+    assert ready.startswith("AIOS_CONFIRM_READY "), ready
+    with Path(log.name).open("rb") as transcript:
+        transcript.seek(start)
+        lines = transcript.read().splitlines()
+    usage, = [json.loads(line.removeprefix(b"MODEL_USAGE ")) for line in lines
+              if line.startswith(b"MODEL_USAGE ")]
+    proposal, = [json.loads(line.removeprefix(b"MODEL_PROPOSAL ")) for line in lines
+                 if line.startswith(b"MODEL_PROPOSAL ")]
+    assert usage["inference_ms"] > 0 and usage["model_peak_rss_kib"] > 0, usage
+    assert proposal == {"name": "append_line", "arguments": {
+        "document": "note.txt", "revision": revision, "line": "우유",
+    }}, proposal
+    return usage, proposal
 
 
 def qmp(stream, name, arguments=None):
@@ -147,10 +186,15 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
 
                 if local_model:
                     addition = "우유"
-                    instruction = "메모에 '우유'를 적어줘."
-                    usage = command(vm, log, f"model-confirm-append {before} {instruction}", "MODEL_USAGE ")
-                    report["model_usage"] = json.loads(usage.removeprefix("MODEL_USAGE "))
-                    assert wait(vm, log, "AIOS_").startswith("AIOS_CONFIRM_READY ")
+                    canceled, canceled_proposal = model_proposal(vm, log, before)
+                    tap(stream, 8192, 24576)
+                    assert wait(vm, log, "AIOS_") == "AIOS_REJECT confirmation-canceled"
+                    report["model_cancellation"] = {
+                        "usage": canceled, "proposal": canceled_proposal,
+                        "note": read_document(vm, before, log=log),
+                    }
+                    assert report["model_cancellation"]["note"] == {"text": original, "revision": before}
+                    report["model_usage"], report["model_proposal"] = model_proposal(vm, log, before)
                 else:
                     assert command(vm, log, request, "AIOS_").startswith("AIOS_CONFIRM_READY ")
                 preview = output / "confirmation.ppm"
@@ -180,7 +224,8 @@ with (output / "console.log").open("wb", buffering=0) as log, subprocess.Popen(
             vm.kill()
 
 if local_model and multitouch:
-    args = launch(bundle, disk, display="none", model=local_model, multitouch=multitouch, initramfs=initramfs)
+    args = launch(bundle, disk, display="none", model=local_model, multitouch=multitouch, initramfs=initramfs,
+                  model_source=model_source)
     with (output / "reboot.log").open("wb", buffering=0) as log, subprocess.Popen(
         args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     ) as vm:
@@ -194,5 +239,9 @@ if local_model and multitouch:
         finally:
             if vm.poll() is None:
                 vm.kill()
+
+if model_source:
+    assert sha256(model_source) == model_hash
+    report["model_source_sha256"] = model_hash
 
 (output / "display.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

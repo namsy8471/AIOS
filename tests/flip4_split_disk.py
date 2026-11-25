@@ -53,7 +53,10 @@ for index, (text, revision) in enumerate(zip((original, saved), revisions)):
             wait(vm, log, "AIOS_DOCUMENT_READY pid=1")
             if drivers:
                 boot_log = log_path.read_bytes().replace(b"\r", b"")
-                loaded = re.findall(rb"^AIOS_MODULE_RESULT (\S+) 0$", boot_log, re.MULTILINE)
+                # Kernel printk can start on the serial line before the result's newline.
+                loaded = re.findall(
+                    rb"^AIOS_MODULE_RESULT (\S+) 0(?=$|\[\s*\d+\.\d+\])", boot_log, re.MULTILINE
+                )
                 assert [name.decode() for name in loaded] == drivers, f"Incomplete driver load in {log_path}"
             if options.guest_model:
                 assert b"AIOS_MODEL_PARTITION_READ_ONLY" in log_path.read_bytes(), "model partition was not mounted"
