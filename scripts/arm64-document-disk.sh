@@ -39,17 +39,7 @@ EOF
 mkinitfs -P "$stage/features" -F 'base virtio ext4 display' -o "$stage/display-initramfs" "${modules[0]##*/}"
 cc -Wall -Wextra $(pkg-config --cflags libdrm) tests/display_route.c -o "$stage/display-route-test"
 "$stage/display-route-test"
-cc -O2 -Wall -Wextra $(pkg-config --cflags libdrm freetype2) src/display-frame.c \
-  -o "$stage/root/usr/bin/display-frame" $(pkg-config --libs libdrm freetype2)
-fonts="$stage/root/usr/share/aios"
-mkdir -p "$fonts"
-font_source=https://raw.githubusercontent.com/google/fonts/16680f8688ffcd467d2eb2146a9ce0343404581d/ofl/nanumgothic
-curl -fsSL --retry 3 "$font_source/NanumGothic-Regular.ttf" -o "$fonts/NanumGothic-Regular.ttf"
-(cd "$fonts" && echo '76f45ef4a6bcff344c837c95a7dcc26e017e38b5846d5ae0cdcb5b86be2e2d31  NanumGothic-Regular.ttf' | sha256sum -c -)
-curl -fsSL --retry 3 "$font_source/OFL.txt" -o "$fonts/OFL.txt"
-while IFS= read -r library; do
-  install -Dm755 "$library" "$stage/root$library"
-done < <(ldd "$stage/root/usr/bin/display-frame" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u)
+bash scripts/arm64-display-root.sh "$stage/root"
 truncate -s 48M "$stage/display.raw"
 mkfs.ext4 -q -F -d "$stage/root" "$stage/display.raw"
 cp "$stage/display.raw" "$stage/multitouch.raw"
