@@ -38,11 +38,12 @@ fn serial_node(name: &str) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-fn open_serial(path: &Path) -> io::Result<fs::File> {
+fn open_serial(path: &Path, nonblocking: bool) -> io::Result<fs::File> {
+    let flags = libc::O_NOCTTY | if nonblocking { libc::O_NONBLOCK } else { 0 };
     let serial = fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .custom_flags(flags)
         .open(path)?;
     let mut term = std::mem::MaybeUninit::uninit();
     let fd = serial.as_raw_fd();
@@ -57,7 +58,7 @@ fn open_serial(path: &Path) -> io::Result<fs::File> {
     Ok(serial)
 }
 
-fn configure(controller: &str) -> io::Result<PathBuf> {
+fn configure(controller: &str, product: &str) -> io::Result<PathBuf> {
     if !Path::new("/sys/class/udc").join(controller).is_dir() {
         return Err(io::Error::other(format!(
             "USB controller {controller} is unavailable"
@@ -85,10 +86,7 @@ fn configure(controller: &str) -> io::Result<PathBuf> {
     fs::write(gadget.join("bDeviceClass"), "0x02\n")?;
     fs::write(gadget.join("bDeviceSubClass"), "0x02\n")?;
     fs::create_dir(gadget.join("strings/0x409"))?;
-    fs::write(
-        gadget.join("strings/0x409/product"),
-        "AIOS Flip4 Diagnostic\n",
-    )?;
+    fs::write(gadget.join("strings/0x409/product"), product)?;
     let function = gadget.join("functions/acm.diagnostic");
     fs::create_dir(&function)?;
     fs::create_dir(gadget.join("configs/c.1"))?;
@@ -102,12 +100,12 @@ fn configure(controller: &str) -> io::Result<PathBuf> {
 }
 
 pub fn broadcast(snapshot: &str) -> io::Result<()> {
-    let path = configure("a600000.dwc3")?;
+    let path = configure("a600000.dwc3", "AIOS Flip4 Diagnostic\n")?;
     let packet = format!("\n{snapshot}");
     let mut serial = None;
     loop {
         if serial.is_none() {
-            serial = open_serial(&path).ok();
+            serial = open_serial(&path, true).ok();
         }
         // Reopen after a hangup and start each report on a fresh line.
         if let Some(port) = &mut serial
@@ -120,21 +118,18 @@ pub fn broadcast(snapshot: &str) -> io::Result<()> {
     }
 }
 
-pub fn verify_dummy(snapshot: &str) -> io::Result<()> {
-    let mut gadget = open_serial(&configure("dummy_udc.0")?)?;
-    let mut host = open_serial(&serial_node("ttyACM0")?)?;
-    gadget.write_all(snapshot.as_bytes())?;
+fn verify_serial_line(serial: &mut fs::File, expected: &[u8]) -> io::Result<()> {
     let mut received = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         let mut bytes = [0; 1024];
-        match host.read(&mut bytes) {
+        match serial.read(&mut bytes) {
             Ok(count) => received.extend_from_slice(&bytes[..count]),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
             Err(error) => return Err(error),
         }
         if received.ends_with(b"\n") {
-            return if received == snapshot.as_bytes() {
+            return if received == expected {
                 Ok(())
             } else {
                 Err(io::Error::other("USB diagnostic bytes did not match"))
@@ -144,6 +139,29 @@ pub fn verify_dummy(snapshot: &str) -> io::Result<()> {
     }
     Err(io::Error::new(
         io::ErrorKind::TimedOut,
-        "USB diagnostic did not reach the host TTY",
+        "USB serial line was not received",
     ))
+}
+
+pub fn verify_dummy(snapshot: &str) -> io::Result<()> {
+    let mut gadget = open_serial(&configure("dummy_udc.0", "AIOS Flip4 Diagnostic\n")?, true)?;
+    let mut host = open_serial(&serial_node("ttyACM0")?, true)?;
+    host.write_all(b"inspect\n")?;
+    verify_serial_line(&mut gadget, b"inspect\n")?;
+    gadget.write_all(snapshot.as_bytes())?;
+    verify_serial_line(&mut host, snapshot.as_bytes())
+}
+
+pub fn document_sessions() -> io::Result<()> {
+    let path = configure("a600000.dwc3", "AIOS Flip4 Document\n")?;
+    loop {
+        let serial = open_serial(&path, false)?;
+        std::process::Command::new("/init")
+            .arg("flip4-usb-document")
+            .stdin(serial.try_clone()?)
+            .stdout(serial)
+            .status()?;
+        // A host disconnect ends its worker. A new connection gets a new session.
+        thread::sleep(Duration::from_millis(250));
+    }
 }

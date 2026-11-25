@@ -88,8 +88,13 @@ fn main() -> io::Result<std::process::ExitCode> {
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/etc/aios-flip4-volumes").is_file() {
-        let result = flip4_storage::prepare()
-            .and_then(|model| document_console(Path::new("/work"), true, Some(model)));
+        let result = flip4_storage::prepare().and_then(|(model, native)| {
+            if native {
+                flip4_usb::document_sessions().map(|()| std::process::ExitCode::SUCCESS)
+            } else {
+                document_console(Path::new("/work"), true, Some(model), false)
+            }
+        });
         if let Err(error) = result {
             eprintln!("AIOS_FLIP4_DOCUMENT_UNAVAILABLE {error}");
         }
@@ -109,7 +114,7 @@ fn main() -> io::Result<std::process::ExitCode> {
                 None
             }
         };
-        return document_console(Path::new("/work"), true, model);
+        return document_console(Path::new("/work"), true, model, false);
     }
     #[cfg(target_os = "linux")]
     if std::process::id() == 1 && Path::new("/aios-boot-probe").is_file() {
@@ -133,6 +138,21 @@ fn main() -> io::Result<std::process::ExitCode> {
     }
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
+        #[cfg(target_os = "linux")]
+        if command == "flip4-usb-document" {
+            if unsafe { libc::getppid() } != 1
+                || !Path::new("/etc/aios-flip4-volumes").is_file()
+                || args.next().is_some()
+            {
+                return Err(io::Error::other("expected the Flip4 document init"));
+            }
+            return document_console(
+                Path::new("/work"),
+                true,
+                Some(Path::new("/model/opt/model")),
+                true,
+            );
+        }
         #[cfg(target_os = "linux")]
         if command == "document-console" {
             use std::os::fd::AsRawFd;
@@ -162,7 +182,7 @@ fn main() -> io::Result<std::process::ExitCode> {
             if unsafe { libc::flock(directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
                 return Err(io::Error::last_os_error());
             }
-            let result = document_console(work, false, model.as_deref());
+            let result = document_console(work, false, model.as_deref(), false);
             drop(directory);
             return result;
         }
@@ -576,7 +596,7 @@ struct DisplaySession {
 
 #[cfg(target_os = "linux")]
 impl DisplaySession {
-    fn request(session: &mut Option<Self>, text: &str) -> io::Result<i32> {
+    fn request(session: &mut Option<Self>, text: &str, touch_only: bool) -> io::Result<i32> {
         use std::io::{BufRead, Write};
         use std::process::{Command, Stdio};
 
@@ -585,7 +605,11 @@ impl DisplaySession {
                 mount_virtual_fs(c"sysfs", c"/sys")?;
             }
             hardware::prepare_display_nodes()?;
-            let mut child = Command::new("/usr/bin/display-frame")
+            let mut command = Command::new("/usr/bin/display-frame");
+            if touch_only {
+                command.arg("--touch-only");
+            }
+            let mut child = command
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()?;
@@ -665,13 +689,35 @@ fn mount_document_ext4(
 }
 
 #[cfg(target_os = "linux")]
+fn usb_document_command(line: &str) -> bool {
+    line == "inspect" || line.starts_with("model-confirm-append ")
+}
+
+#[cfg(all(target_os = "linux", test))]
+#[test]
+fn flip4_usb_requires_touch_to_write() {
+    assert!(usb_document_command("inspect"));
+    assert!(usb_document_command("model-confirm-append hash 우유"));
+    for request in [
+        "append hash 우유",
+        "model-append hash 우유",
+        "korean hash 우유",
+        "read hash 0 1",
+        "poweroff",
+    ] {
+        assert!(!usb_document_command(request));
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn document_console(
     work: &Path,
     guest_init: bool,
     model: Option<&Path>,
+    physical_usb: bool,
 ) -> io::Result<std::process::ExitCode> {
     use sha2::{Digest, Sha256};
-    use std::io::BufRead;
+    use std::io::{BufRead, Read};
     let path = work.join("note.txt");
     let staged = work.join(".aios-note-staging");
     if guest_init && Path::new("/etc/aios-qemu-work-partition").is_file() {
@@ -714,8 +760,30 @@ fn document_console(
     }
     let mut display = None;
     println!("AIOS_DOCUMENT_READY pid={}", std::process::id());
-    for request in io::stdin().lock().lines() {
-        let line = request?;
+    let mut input = io::stdin().lock();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let count = if physical_usb {
+            (&mut input).take(1025).read_line(&mut line)?
+        } else {
+            input.read_line(&mut line)?
+        };
+        if count == 0 {
+            break;
+        }
+        if physical_usb && (count > 1024 || !line.ends_with('\n')) {
+            return Err(io::Error::other(
+                "incomplete or oversized USB document request",
+            ));
+        }
+        let line = line.strip_suffix('\n').map_or(line.as_str(), |line| {
+            line.strip_suffix('\r').unwrap_or(line)
+        });
+        if physical_usb && !usb_document_command(line) {
+            println!("AIOS_REJECT invalid-request");
+            continue;
+        }
         if line == "poweroff" {
             if !guest_init {
                 println!("AIOS_REJECT invalid-request");
@@ -756,7 +824,7 @@ fn document_console(
             continue;
         }
         if line == "display-frame" && guest_init {
-            match DisplaySession::request(&mut display, "") {
+            match DisplaySession::request(&mut display, "", false) {
                 Ok(0) => println!("AIOS_FRAME_DONE"),
                 _ => println!("AIOS_REJECT display-frame-unavailable"),
             }
@@ -857,7 +925,7 @@ fn document_console(
                 });
                 println!("MODEL_PROPOSAL {proposal}");
             }
-            match DisplaySession::request(&mut display, text) {
+            match DisplaySession::request(&mut display, text, physical_usb) {
                 Ok(0) => {}
                 Ok(42) => {
                     println!("AIOS_REJECT confirmation-canceled");

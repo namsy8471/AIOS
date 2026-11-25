@@ -167,7 +167,7 @@ fn touch_updates_disabled(tree: &Path) -> bool {
     })
 }
 
-pub fn prepare() -> io::Result<&'static Path> {
+pub fn prepare() -> io::Result<(&'static Path, bool)> {
     mount_virtual_fs(c"proc", c"/proc")?;
     mount_virtual_fs(c"sysfs", c"/sys")?;
     let tree = Path::new("/sys/firmware/devicetree/base");
@@ -222,7 +222,7 @@ pub fn prepare() -> io::Result<&'static Path> {
     validation?;
     mount_document_ext4(&work, c"/work", flags, None, false)?;
     println!("AIOS_FLIP4_STORAGE_READY {scope}");
-    Ok(Path::new("/model/opt/model"))
+    Ok((Path::new("/model/opt/model"), native))
 }
 
 #[cfg(test)]

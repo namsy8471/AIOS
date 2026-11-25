@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -195,7 +196,10 @@ static struct display_target find_display(void) {
     return best;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    int touch_only = argc == 2 && !strcmp(argv[1], "--touch-only");
+    if (argc != 1 && !touch_only)
+        return 1;
     int result = 1;
     struct display_target target = find_display();
     if (target.fd < 0) {
@@ -222,9 +226,11 @@ int main(void) {
     pixels = mmap(NULL, buffer.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
     if (pixels == MAP_FAILED)
         goto cleanup;
-    console = open("/dev/console", O_RDONLY | O_CLOEXEC);
-    if (console < 0)
-        goto cleanup;
+    if (!touch_only) {
+        console = open("/dev/console", O_RDONLY | O_CLOEXEC);
+        if (console < 0)
+            goto cleanup;
+    }
     if (drmModeAddFB(fd, buffer.width, buffer.height, 24, 32, buffer.pitch, buffer.handle, &framebuffer))
         goto cleanup;
     fprintf(stderr, "AIOS display allocated %ux%u buffer\n", buffer.width, buffer.height);
