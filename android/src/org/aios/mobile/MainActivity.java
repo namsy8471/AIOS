@@ -11,10 +11,12 @@ import android.os.SystemClock;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.WindowInsets;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,6 +34,8 @@ import org.json.JSONObject;
 public final class MainActivity extends Activity {
     private static final int PICK_MODEL = 1;
     private static final int PICK_NOTES = 2;
+    private static final int PICK_PC = 3;
+    private static final int PICK_LARGE_MODEL = 4;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final List<Button> controls = new ArrayList<>();
     private LinearLayout content;
@@ -40,7 +44,10 @@ public final class MainActivity extends Activity {
     private TextView files;
     private TextView draft;
     private EditText instruction;
-    private EditText token;
+    private TextView pcStatus;
+    private Spinner modelChoice;
+    private Spinner pcModelChoice;
+    private PcPairing pc;
     private JSONArray selected = new JSONArray();
     private MobileEngine engine;
 
@@ -60,19 +67,39 @@ public final class MainActivity extends Activity {
 
         label("AIOS", 28);
         instruction = input("예: 메모에 우유를 적어 줘.", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        status = label(engine.weights().isFile() ? "로컬 모델 준비됨" : "로컬 모델을 가져오세요.", 15);
+        status = label(engine.weights(false).isFile() ? "로컬 모델 준비됨" : "로컬 모델을 가져오세요.", 15);
         label("이 휴대폰의 메모", 20);
         memo = label("", 16);
-        button("로컬 모델 가져오기", () -> pick(PICK_MODEL, "*/*", false));
+        modelChoice = new Spinner(this);
+        ArrayAdapter<String> sizes = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
+                new String[]{"로컬 경량 모델", "로컬 대형 모델"});
+        sizes.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelChoice.setAdapter(sizes);
+        content.addView(modelChoice);
+        button("선택한 로컬 모델 가져오기", () ->
+            pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
         button("메모 변경 미리 보기", this::previewMemo);
         label("Windows PC에 작업 보내기", 20);
-        token = input("PC 연결 토큰", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        token.setText(getPreferences(MODE_PRIVATE).getString("usb_token", ""));
+        pcStatus = label("연결한 PC 없음", 15);
+        button("PC 페어링 파일 가져오기", () -> pick(PICK_PC, "*/*", false));
+        try {
+            pc = engine.pairedPc();
+            if (pc != null) pcStatus.setText("페어링된 PC · " + pc.endpoint);
+        } catch (Exception invalid) {
+            pcStatus.setText("PC 페어링 파일을 다시 가져오세요.");
+        }
         files = label("선택한 회의 메모 없음", 15);
         button("회의 메모 선택", () -> pick(PICK_NOTES, "text/*", true));
+        pcModelChoice = new Spinner(this);
+        ArrayAdapter<String> providers = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
+                new String[]{"Windows 로컬 모델", "ChatGPT 계정", "Claude 계정"});
+        providers.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        pcModelChoice.setAdapter(providers);
+        content.addView(pcModelChoice);
         button("보낼 내용 확인", this::confirmDraftRequest);
         label("저장한 보고서 초안", 20);
         draft = label("", 16);
+        button("저장한 초안을 Google Drive에 보내기", this::confirmDriveUpload);
         refresh();
     }
 
@@ -136,8 +163,9 @@ public final class MainActivity extends Activity {
 
     private void previewMemo() {
         String text = instruction.getText().toString();
+        boolean larger = modelChoice.getSelectedItemPosition() == 1;
         long start = SystemClock.elapsedRealtime();
-        run("휴대폰에서 추론 중", () -> new String[] {MobileEngine.sha(engine.memoText()), engine.proposeLine(text)}, proposal -> {
+        run("휴대폰에서 추론 중", () -> new String[] {MobileEngine.sha(engine.memoText()), engine.proposeLine(text, larger)}, proposal -> {
             status.setText("미리 보기 · " + (SystemClock.elapsedRealtime() - start) + " ms");
             new AlertDialog.Builder(this).setTitle("메모에 추가할 내용").setMessage(proposal[1])
                 .setNegativeButton("취소", null).setPositiveButton("저장", (dialog, action) -> {
@@ -152,21 +180,38 @@ public final class MainActivity extends Activity {
 
     private void confirmDraftRequest() {
         String task = instruction.getText().toString().trim();
-        String pairing = token.getText().toString().trim();
+        PcPairing paired = pc;
         JSONArray sources = selected;
+        String provider = new String[]{"local", "chatgpt", "claude"}[pcModelChoice.getSelectedItemPosition()];
+        String destination;
+        switch (provider) {
+            case "chatgpt": destination = "Windows PC를 거쳐 OpenAI ChatGPT"; break;
+            case "claude": destination = "Windows PC를 거쳐 Anthropic Claude"; break;
+            default: destination = "Windows PC 로컬 모델";
+        }
         if (sources.length() == 0 || task.isEmpty()) { status.setText("회의 메모와 지시를 입력해 주세요."); return; }
         if (task.getBytes(StandardCharsets.UTF_8).length > 1024) { status.setText("지시는 1024바이트 이내로 입력해 주세요."); return; }
-        if (!pairing.matches("[0-9a-f]{64}")) { status.setText("PC 연결 토큰을 확인해 주세요."); return; }
+        if (paired == null) { status.setText("먼저 Windows PC를 연결해 주세요."); return; }
         StringBuilder preview = new StringBuilder(task);
         for (int i = 0; i < sources.length(); i++) {
             JSONObject source = sources.optJSONObject(i);
             preview.append("\n\n").append(source.optString("name")).append('\n').append(source.optString("text"));
         }
-        new AlertDialog.Builder(this).setTitle("Windows 작업자에게 보낼 내용").setMessage(preview)
+        new AlertDialog.Builder(this).setTitle(destination + "에 보낼 내용").setMessage(preview)
             .setNegativeButton("취소", null).setPositiveButton("보내기", (dialog, action) -> {
-                getPreferences(MODE_PRIVATE).edit().putString("usb_token", pairing).apply();
-                run("Windows에서 보고서 작성 중", () -> engine.requestDraft(pairing, task, sources), this::reviewDraft);
+                run("보고서 작성 중 · " + destination, () -> engine.requestDraft(paired, task, sources, provider), this::reviewDraft);
             }).show();
+    }
+
+    private void confirmDriveUpload() {
+        PcPairing paired = pc;
+        String saved = draft.getText().toString();
+        if (paired == null) { status.setText("먼저 Windows PC를 연결해 주세요."); return; }
+        if (saved.isBlank()) { status.setText("먼저 보고서 초안을 저장해 주세요."); return; }
+        new AlertDialog.Builder(this).setTitle("Windows PC를 거쳐 Google Drive에 저장").setMessage(saved)
+            .setNegativeButton("취소", null).setPositiveButton("Drive에 저장", (dialog, action) ->
+                run("Google Drive에 저장 중", () -> engine.uploadDraft(paired, saved), result ->
+                    status.setText("Google Drive 저장 완료 · " + result.optString("name")))).show();
     }
 
     private void reviewDraft(JSONObject result) {
@@ -189,14 +234,26 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null) return;
-        if (request == PICK_MODEL && data.getData() != null) {
+        if ((request == PICK_MODEL || request == PICK_LARGE_MODEL) && data.getData() != null) {
+            boolean larger = request == PICK_LARGE_MODEL;
             run("로컬 모델 가져오는 중", () -> {
                 try (InputStream model = getContentResolver().openInputStream(data.getData())) {
                     if (model == null) throw new IOException("모델을 열 수 없습니다.");
-                    engine.importWeights(model);
+                    engine.importWeights(model, larger);
                 }
                 return null;
             }, ignored -> status.setText("로컬 모델 준비됨"));
+        } else if (request == PICK_PC && data.getData() != null) {
+            run("PC 페어링 파일 읽는 중", () -> {
+                try (InputStream pairing = getContentResolver().openInputStream(data.getData())) {
+                    if (pairing == null) throw new IOException("PC 페어링 파일을 열 수 없습니다.");
+                    return engine.importPairing(pairing);
+                }
+            }, paired -> {
+                pc = paired;
+                pcStatus.setText("페어링된 PC · " + paired.endpoint);
+                status.setText("PC 연결 정보 저장 완료");
+            });
         } else if (request == PICK_NOTES) {
             List<Uri> uris = new ArrayList<>();
             if (data.getClipData() == null) {

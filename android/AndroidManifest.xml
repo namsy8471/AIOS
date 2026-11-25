@@ -1,9 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.aios.mobile">
     <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="AIOS" android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:allowBackup="false" android:extractNativeLibs="true"
-        android:networkSecurityConfig="@xml/network_security_config">
+    <application android:label="@string/app_name" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:allowBackup="false" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

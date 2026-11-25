@@ -4,18 +4,20 @@ from base64 import b64decode
 from hashlib import file_digest
 import json
 from pathlib import Path
+import re
 import subprocess
+from time import monotonic, sleep
 
 
 PACKAGE = "org.aios.mobile"
-PORT = "tcp:18120"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--weights", type=Path, required=True)
-    parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--pairing-file", type=Path, required=True)
+    parser.add_argument("--large-weights", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     adb = [args.adb, "-d"]
@@ -50,16 +52,24 @@ def main():
         raise RuntimeError(f"Expected the authorized Galaxy Z Flip4, got {model}")
     call("shell", "run-as", PACKAGE, "mkdir", "-p", "files/probe")
     call("shell", "run-as", PACKAGE, "rm", "-f", "files/probe/memo.txt", "files/probe/draft.md")
-    with args.weights.open("rb") as source:
-        expected = file_digest(source, "sha256").hexdigest()
+    def install_weights(weights, name):
+        destination = f"files/{name}"
+        with weights.open("rb") as source:
+            expected = file_digest(source, "sha256").hexdigest()
         installed = call("shell", "run-as", PACKAGE, "sh", "-c",
-                         "'if [ -f files/model.gguf ]; then sha256sum files/model.gguf; fi'")
+                         f"'if [ -f {destination} ]; then sha256sum {destination}; fi'")
         if not installed.startswith(f"{expected} "):
-            copy_app_file(args.weights, "files/model.gguf.incoming")
-            transferred = call("shell", "run-as", PACKAGE, "sha256sum", "files/model.gguf.incoming")
+            incoming = f"{destination}.incoming"
+            copy_app_file(weights, incoming)
+            transferred = call("shell", "run-as", PACKAGE, "sha256sum", incoming)
             if not transferred.startswith(f"{expected} "):
                 raise RuntimeError("Model bytes changed in transit")
-            call("shell", "run-as", PACKAGE, "mv", "files/model.gguf.incoming", "files/model.gguf")
+            call("shell", "run-as", PACKAGE, "mv", incoming, destination)
+        return expected
+
+    expected = install_weights(args.weights, "model.gguf")
+    if args.large_weights:
+        expected_large = install_weights(args.large_weights, "model-large.gguf")
 
     airplane = call("shell", "settings", "get", "global", "airplane_mode_on")
     if airplane not in {"0", "1"}:
@@ -72,6 +82,8 @@ def main():
         local = probe("local")
         call("shell", "am", "force-stop", PACKAGE)
         restored = probe("verify")
+        if args.large_weights:
+            large = probe("large")
     finally:
         if airplane == "0":
             call("shell", "cmd", "connectivity", "airplane-mode", "disable")
@@ -79,23 +91,30 @@ def main():
         if local[name] != restored[name]:
             raise RuntimeError("Memo changed after process restart")
 
-    mappings = [line.split()[-2:] for line in call("reverse", "--list").splitlines()]
-    if any(pair[0] == PORT and pair != [PORT, PORT] for pair in mappings):
-        raise RuntimeError("ADB port already belongs to another mapping")
-    created = [PORT, PORT] not in mappings
-    if created:
-        call("reverse", PORT, PORT)
+    port = json.loads(args.pairing_file.read_text(encoding="utf-8"))["port"]
+    if any(f"tcp:{port}" in line.split()[-2:] for line in call("reverse", "--list").splitlines()):
+        raise RuntimeError("Remove the debug port forwarding before testing Wi-Fi")
+    deadline = monotonic() + 30
+    while True:
+        wireless = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/", call("shell", "ip", "-4", "addr", "show", "wlan0"))
+        if wireless or monotonic() >= deadline:
+            break
+        sleep(1)
+    if not wireless:
+        raise RuntimeError("The Flip4 does not have a Wi-Fi IPv4 address")
     try:
-        copy_app_file(args.token_file, "files/probe/pairing.token")
+        copy_app_file(args.pairing_file, "files/probe/pairing.json")
         remote = probe("pc")
     finally:
-        if created:
-            call("reverse", "--remove", PORT)
-        call("shell", "run-as", PACKAGE, "rm", "-f", "files/probe/pairing.token")
+        call("shell", "run-as", PACKAGE, "rm", "-f", "files/probe/pairing.json")
+    if remote["reply"]["peer_address"] != wireless[1]:
+        raise RuntimeError("The PC did not receive the job from the Flip4 Wi-Fi address")
 
     proof = {"device": model, "scope": "android_app_engine_instrumentation", "model_sha256": expected,
              "airplane_mode_checked": True, "local": local, "restored_after_force_stop": restored,
-             "windows_over_usb": remote}
+             "windows_over_wifi": remote}
+    if args.large_weights:
+        proof["large_model"] = {"model_sha256": expected_large, **large}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(proof, ensure_ascii=True))

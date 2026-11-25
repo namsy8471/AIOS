@@ -10,8 +10,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import javax.net.ssl.HttpsURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.UUID;
@@ -23,10 +22,11 @@ import org.json.JSONObject;
 final class MobileEngine {
     static final int MAX_SOURCE_BYTES = 8192;
     private final File storage;
-    private final File weights;
+    private final File models;
     private final File nativeModelRunner;
     private final AtomicFile memo;
     private final AtomicFile draft;
+    private final AtomicFile pairing;
 
     MobileEngine(Context context) {
         this(context, context.getFilesDir());
@@ -34,17 +34,30 @@ final class MobileEngine {
 
     MobileEngine(Context context, File storage) {
         this.storage = storage;
-        weights = new File(context.getFilesDir(), "model.gguf");
+        models = context.getFilesDir();
         nativeModelRunner = new File(context.getApplicationInfo().nativeLibraryDir, "libllama-runner.so");
         memo = new AtomicFile(new File(storage, "memo.txt"));
         draft = new AtomicFile(new File(storage, "draft.md"));
+        pairing = new AtomicFile(new File(storage, "pc-pairing.json"));
     }
 
-    File weights() { return weights; }
+    File weights(boolean larger) { return new File(models, larger ? "model-large.gguf" : "model.gguf"); }
 
     String memoText() throws IOException { return readText(memo); }
 
     String draftText() throws IOException { return readText(draft); }
+
+    PcPairing pairedPc() throws Exception {
+        String config = readText(pairing);
+        return config.isEmpty() ? null : new PcPairing(config);
+    }
+
+    PcPairing importPairing(InputStream input) throws Exception {
+        String config = new String(readLimited(input, 8192), StandardCharsets.UTF_8);
+        PcPairing pc = new PcPairing(config);
+        writeText(pairing, config);
+        return pc;
+    }
 
     private static String readText(AtomicFile file) throws IOException {
         try {
@@ -94,8 +107,8 @@ final class MobileEngine {
         return content.toByteArray();
     }
 
-    void importWeights(InputStream input) throws IOException {
-        AtomicFile model = new AtomicFile(weights());
+    void importWeights(InputStream input, boolean larger) throws IOException {
+        AtomicFile model = new AtomicFile(weights(larger));
         FileOutputStream output = model.startWrite();
         try {
             byte[] magic = new byte[4];
@@ -111,7 +124,7 @@ final class MobileEngine {
             long total = magic.length;
             for (int read; (read = input.read(chunk)) != -1;) {
                 total += read;
-                if (total > 1024L * 1024 * 1024) throw new IOException("모델 크기 한도는 1 GiB입니다.");
+                if (total > 4L * 1024 * 1024 * 1024) throw new IOException("모델 파일은 4 GiB까지 가져올 수 있습니다.");
                 output.write(chunk, 0, read);
             }
             model.finishWrite(output);
@@ -121,8 +134,9 @@ final class MobileEngine {
         }
     }
 
-    String proposeLine(String instruction) throws Exception {
-        if (!weights().isFile()) throw new IOException("먼저 로컬 GGUF 모델을 가져오세요.");
+    String proposeLine(String instruction, boolean larger) throws Exception {
+        File weights = weights(larger);
+        if (!weights.isFile()) throw new IOException("선택한 로컬 GGUF 모델을 먼저 가져오세요.");
         if (instruction.isBlank() || instruction.getBytes(StandardCharsets.UTF_8).length > 512
                 || instruction.contains("<|") || instruction.chars().anyMatch(Character::isISOControl)) {
             throw new IOException("512바이트 이내의 한 줄 지시를 입력해 주세요.");
@@ -135,7 +149,7 @@ final class MobileEngine {
         File output = File.createTempFile("model-", ".text", storage);
         Process process = null;
         try {
-            process = new ProcessBuilder(nativeModelRunner.getAbsolutePath(), "-m", weights().getAbsolutePath(),
+            process = new ProcessBuilder(nativeModelRunner.getAbsolutePath(), "-m", weights.getAbsolutePath(),
                 "-ngl", "0", "-n", "64", prompt).redirectOutput(output).redirectError(new File("/dev/null")).start();
             process.getOutputStream().close();
             if (!process.waitFor(60, TimeUnit.SECONDS)) throw new IOException("로컬 모델 실행 시간이 초과됐습니다.");
@@ -164,33 +178,48 @@ final class MobileEngine {
         return new JSONObject().put("name", name).put("text", text).put("sha256", sha(text));
     }
 
-    JSONObject requestDraft(String token, String instruction, JSONArray sources) throws Exception {
-        if (!token.matches("[0-9a-f]{64}")) throw new IOException("PC 연결 토큰을 확인해 주세요.");
+    JSONObject requestDraft(PcPairing pc, String instruction, JSONArray sources, String provider) throws Exception {
         String id = UUID.randomUUID().toString();
-        byte[] request = new JSONObject().put("id", id).put("task", "meeting_draft")
-                .put("instruction", instruction).put("sources", sources).toString().getBytes(StandardCharsets.UTF_8);
         long start = SystemClock.elapsedRealtime();
-        HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:18120/v1/jobs").openConnection();
+        JSONObject result = pcRequest(pc, "/v1/jobs", new JSONObject().put("id", id).put("task", "meeting_draft")
+                .put("instruction", instruction).put("sources", sources).put("provider", provider));
+        if (!id.equals(result.getString("id")) || !provider.equals(result.getString("provider"))
+                || result.getString("draft").isBlank()) throw new JSONException("PC 결과가 요청과 일치하지 않습니다.");
+        JSONArray hashes = result.getJSONArray("source_hashes");
+        if (hashes.length() != sources.length()) throw new JSONException("PC 문서 목록이 일치하지 않습니다.");
+        for (int i = 0; i < hashes.length(); i++) {
+            if (!hashes.getString(i).equals(sources.getJSONObject(i).getString("sha256"))) throw new JSONException("PC 문서 해시가 일치하지 않습니다.");
+        }
+        return result.put("round_trip_ms", SystemClock.elapsedRealtime() - start);
+    }
+
+    JSONObject uploadDraft(PcPairing pc, String text) throws Exception {
+        String digest = sha(text);
+        JSONObject result = pcRequest(pc, "/v1/drive-files", new JSONObject().put("text", text).put("sha256", digest));
+        if (!digest.equals(result.getString("sha256")) || result.getString("file_id").isEmpty()) {
+            throw new JSONException("Drive 저장 결과가 요청과 일치하지 않습니다.");
+        }
+        return result;
+    }
+
+    private JSONObject pcRequest(PcPairing pc, String route, JSONObject payload) throws Exception {
+        byte[] request = payload.toString().getBytes(StandardCharsets.UTF_8);
+        HttpsURLConnection connection = pc.connect(route);
         try {
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setConnectTimeout(4000);
             connection.setReadTimeout(130000);
-            connection.setRequestProperty("Authorization", "Bearer " + token);
+            connection.setRequestProperty("Authorization", "Bearer " + pc.token);
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setFixedLengthStreamingMode(request.length);
             try (OutputStream output = connection.getOutputStream()) { output.write(request); }
-            if (connection.getResponseCode() != 200) throw new IOException("PC 작업 실패 (HTTP " + connection.getResponseCode() + ")");
+            int status = connection.getResponseCode();
+            if (status == 412) throw new IOException("Windows에서 선택한 서비스 계정을 먼저 연결해 주세요.");
+            if (status != 200) throw new IOException("PC 작업 실패 (HTTP " + status + ")");
             try (InputStream input = connection.getInputStream()) {
-                JSONObject result = new JSONObject(new String(readLimited(input, 65536), StandardCharsets.UTF_8));
-                if (!id.equals(result.getString("id")) || result.getString("draft").isBlank()) throw new JSONException("PC 결과가 요청과 일치하지 않습니다.");
-                JSONArray hashes = result.getJSONArray("source_hashes");
-                if (hashes.length() != sources.length()) throw new JSONException("PC 문서 목록이 일치하지 않습니다.");
-                for (int i = 0; i < hashes.length(); i++) {
-                    if (!hashes.getString(i).equals(sources.getJSONObject(i).getString("sha256"))) throw new JSONException("PC 문서 해시가 일치하지 않습니다.");
-                }
-                return result.put("round_trip_ms", SystemClock.elapsedRealtime() - start);
+                return new JSONObject(new String(readLimited(input, 65536), StandardCharsets.UTF_8));
             }
         } finally {
             connection.disconnect();

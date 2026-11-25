@@ -29,11 +29,11 @@ public final class MobileProbe extends Instrumentation {
             if (!probe.isDirectory() && !probe.mkdirs()) throw new IllegalStateException("Cannot create probe workspace");
             MobileEngine engine = new MobileEngine(app, probe);
             JSONObject report = new JSONObject().put("mode", mode);
-            if ("local".equals(mode)) {
+            if ("local".equals(mode) || "large".equals(mode)) {
                 long start = SystemClock.elapsedRealtime();
                 String original = engine.memoText();
                 String revision = MobileEngine.sha(original);
-                String line = engine.proposeLine("메모에 '우유'를 적어줘.");
+                String line = engine.proposeLine("메모에 '우유'를 적어줘.", "large".equals(mode));
                 if (!"우유".equals(line) || !engine.memoText().equals(original)) throw new AssertionError("Invalid unsaved proposal");
                 long preview = SystemClock.elapsedRealtime();
                 engine.saveMemo(revision, line);
@@ -44,13 +44,13 @@ public final class MobileProbe extends Instrumentation {
             } else if ("verify".equals(mode)) {
                 report.put("memo", engine.memoText()).put("revision", MobileEngine.sha(engine.memoText()));
             } else if ("pc".equals(mode)) {
-                String token = Files.readString(new File(probe, "pairing.token").toPath(), StandardCharsets.US_ASCII).trim();
+                PcPairing pc = new PcPairing(Files.readString(new File(probe, "pairing.json").toPath(), StandardCharsets.UTF_8));
                 JSONArray notes = new JSONArray()
                     .put(MobileEngine.source("회의 1.txt", "서윤은 2026-11-27까지 플립4 앱 UI 점검을 완료한다."))
                     .put(MobileEngine.source("회의 2.txt", "지훈은 2026-11-29까지 Windows 문서 초안 기능을 검증한다."))
                     .put(MobileEngine.source("회의 3.txt", "다은은 2026-12-02까지 공동 테스트 결과를 정리한다."));
                 String oldDraft = engine.draftText();
-                JSONObject reply = engine.requestDraft(token, "담당자와 기한이 빠지지 않게 회의 보고서 초안을 만들어 줘.", notes);
+                JSONObject reply = engine.requestDraft(pc, "담당자와 기한이 빠지지 않게 회의 보고서 초안을 만들어 줘.", notes, "local");
                 if (!oldDraft.equals(engine.draftText())) throw new AssertionError("Draft was saved before review");
                 String draft = reply.getString("draft");
                 for (String[] expected : new String[][]{{"서윤", "2026-11-27"}, {"지훈", "2026-11-29"}, {"다은", "2026-12-02"}}) {
