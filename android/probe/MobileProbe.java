@@ -30,7 +30,9 @@ public final class MobileProbe extends Instrumentation {
             if (!probe.isDirectory() && !probe.mkdirs()) throw new IllegalStateException("Cannot create probe workspace");
             MobileEngine engine = new MobileEngine(app, probe);
             JSONObject report = new JSONObject().put("mode", mode);
-            if ("direct".equals(mode)) {
+            if ("memo-latency".equals(mode)) {
+                report = MemoLatencyProbe.run(this, app);
+            } else if ("direct".equals(mode)) {
                 checkDirectMemo(engine, report);
             } else if ("local".equals(mode) || "large".equals(mode)) {
                 long start = SystemClock.elapsedRealtime();

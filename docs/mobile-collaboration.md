@@ -37,11 +37,13 @@ Windows에서 `llama-server`를 `127.0.0.1:18080`에 열고, `python scripts/pai
 
 | 경로 | 걸린 시간 |
 | --- | ---: |
-| 폰 단독, 비행기 모드, Qwen2.5-0.5B | 미리 보기 2,036 ms |
-| 폰 단독, 비행기 모드, Qwen2.5-3B | 미리 보기 8,343 ms |
-| Wi-Fi로 Windows에 위임, Windows Qwen2.5-3B | 왕복 6,575 ms, PC 추론 6,504 ms |
+| 폰 단독, 비행기 모드, Qwen2.5-0.5B-Instruct Q4_K_M | 미리 보기 2,036 ms |
+| 폰 단독, 비행기 모드, Qwen2.5-3B-Instruct Q4_K_M | 미리 보기 8,343 ms |
+| Wi-Fi로 Windows에 위임, Windows Qwen2.5-3B-Instruct Q4_K_M | 왕복 6,575 ms, PC 추론 6,504 ms |
 
 앱의 경량·대형 모델은 서로 다른 파일로 유지한다. 첫 선택은 경량 모델이다. 대형 모델도 GGUF 파일 선택으로 교체할 수 있으며, 위 시험의 3B 양자화 파일은 약 1.96 GiB다. 실제 손가락 입력, 사람의 비교 작업 시간, 배터리는 아직 계측하지 않았다.
+
+플립4의 슬롯 두 개는 GGUF 메타데이터와 기기 파일 해시를 대조했다. 경량 슬롯은 **Qwen2.5-0.5B-Instruct Q4_K_M** 491,400,032바이트(469 MiB), 대형 슬롯은 **Qwen2.5-3B-Instruct Q4_K_M** 2,104,932,768바이트(1.96 GiB)다. [0.5B 원본](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) · [3B 원본](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF)
 
 Windows 초안은 담당자와 기한 세 쌍을 정확히 포함했으며, 원문에 근거가 없는 문장도 생성했다. 앱에서 검토한 뒤 저장하는 흐름을 유지한다.
 
@@ -66,6 +68,47 @@ OpenCL은 Adreno 730에 37개 레이어 전체, 8개, 1개를 각각 오프로�
 재현 시 `scripts/build-mobile-model-runner.ps1`로 Android ARM64 모델 실행기를 먼저 빌드한다. Vulkan은 Visual Studio 개발자 PowerShell에서 `-VulkanSdk`와 별도 `-OutDir`을 지정한다. OpenCL은 별도 `-OutDir`과 Khronos [OpenCL-Headers](https://github.com/KhronosGroup/OpenCL-Headers/tree/82f60316cc142e7b21dc1d8983b26de18858fbd9)의 `-OpenCLHeaders`, 시험 폰에서 가져온 `/vendor/lib64/libOpenCL.so`의 `-OpenCLLibrary`를 지정한다.
 
 `scripts/build-mobile-inference-bench.ps1`의 `-ModelBuildDir`에 백엔드를 빌드한 디렉터리를 지정한다. OpenCL 빌드에서는 `-OpenCLLibrary`도 전달한다. 반환된 `mobile-inference-bench`를 `scripts/build-mobile-apk.ps1 -Probe -BenchmarkRunner`에 넘긴다. 계측 APK를 설치한 뒤 `tests/mobile_inference_bench.py`에 `--adb`, `--output`, 선택적으로 `--threads`와 `--gpu-layers`를 넘긴다. OpenCL에는 `--opencl`을 추가한다. 앱 전용 저장소의 대형 슬롯에 3B GGUF가 있어야 한다.
+
+### 터치 입력에서 미리보기 프레임까지
+
+플립4를 실제로 열고 잠금을 푼 상태에서 `메모에 우유 추가`를 사용했다. 계측 화면에 기존 미리보기 흐름을 재현하고 최적화 네 가지를 순서대로 누적했다. 각 구성에 워밍업 4회와 측정 100회를 적용했고, 순서를 돌아가며 바꿨다. 주입한 터치의 손을 떼는 순간부터 미리보기 프레임이 스왑 체인에 제출될 때까지 쟀다. 키보드 입력과 화면 패널의 표시 시간은 계측 범위 밖이다. [Android 프레임 제출 콜백](https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable))
+
+| 구성 | 중앙값 | 95백분위수 | 100 ms 이내 |
+| --- | ---: | ---: | ---: |
+| 기존 흐름 재현 | 50.3 ms | 66.6 ms | 100/100 |
+| 1. 입력이 바뀔 때 명령을 해석 | 54.1 ms | 64.5 ms | 100/100 |
+| 2. 화면에 표시한 메모의 버전 재사용 | 55.9 ms | 70.9 ms | 100/100 |
+| 3. 직접 명령의 백그라운드 스레드 왕복 제거 | 43.0 ms | 57.9 ms | 100/100 |
+| 4. 기존 화면 안에 미리보기를 표시 | 22.1 ms | 28.1 ms | 100/100 |
+
+각 미리보기의 내용과 원본 버전을 확인했다. 500회 동안 원문이 유지되고, 승인 시 한 번 저장되며 오래된 버전의 승인은 거부되는 것을 검증했다. 최적화 네 가지는 계측 화면에서 비교했다. `-Probe` APK를 설치한 상태에서 `adb -d shell am instrument -w -e mode memo-latency org.aios.mobile/.MobileProbe`로 실행하고 앱 전용 `files/latency-probe/report.json`에서 결과를 읽는다.
+
+### 안드로이드 앱에서 예약과 다른 앱 조작
+
+- 시간에 맞춰 알림을 보내고, 사용자가 알림을 누르면 게임을 여는 흐름은 안드로이드 API로 구현할 수 있다. 정확한 알람은 앱의 용도와 특수 접근 권한에 따라 가능하다. [알람 예약](https://developer.android.com/develop/background-work/services/alarms) · [백그라운드 화면 실행](https://developer.android.com/guide/components/activities/secure-bal)
+- 잠금 해제 후 화면의 버튼을 누르는 흐름은 사용자가 접근성 서비스를 활성화하고, 게임에서 대상 UI를 식별할 방법과 자동화 허용 조건이 있을 때 구현할 수 있다. 별도 화면 캡처를 사용하는 경우 매 세션 사용자 승인이 필요하다. [접근성 서비스](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService) · [화면 캡처](https://developer.android.com/media/grow/media-projection)
+- PIN 등이 걸린 상태에서 일반 앱은 사용자 인증을 대신해 잠금을 풀 수 없다. Google Play는 접근성 API를 사용해 앱이 스스로 행동을 시작·계획·실행하는 방식을 제한하며, 정해진 규칙에 따른 자동화를 별도로 다룬다. 현재 AIOS Android 앱은 메모와 PC 작업 기능을 제공하며 예약 및 다른 앱 조작 기능은 구현 전이다. [Android 화면 잠금](https://developer.android.com/reference/android/app/KeyguardManager) · [Google Play 접근성 정책](https://support.google.com/googleplay/android-developer/answer/10964491)
+
+iOS에서는 단축어의 시간 트리거와 앱이 공개한 App Intents를 조합할 수 있다. 대상 게임이 출석 동작을 공식적으로 노출하면 예약 실행을 시험할 수 있다. 일반 배포 앱용 공개 API로 다른 앱의 임의 버튼을 제어하는 경로는 확인되지 않았다. Xcode의 XCUIAutomation은 테스트 환경에서 앱 UI를 제어할 수 있다. [Apple 단축어 자동화](https://support.apple.com/guide/shortcuts/add-automations-apdfbdbd7123/ios) · [App Intents](https://developer.apple.com/documentation/appintents) · [XCUIAutomation](https://developer.apple.com/documentation/XCUIAutomation/recording-ui-automation-for-testing)
+
+### 비교용 로컬 모델
+
+비교 모델은 개발 PC의 `build/local-models`에 저장한다. 아래는 다운로드 파일 크기다. 실행 중에는 작업 버퍼와 문맥을 유지하는 메모리가 추가로 필요하다. 플립4에서 검증한 기본 모델은 Qwen2.5-0.5B-Instruct Q4_K_M이다. 다른 모델을 앱에 적용하려면 각 모델의 채팅 템플릿으로 한국어 지시와 JSON 응답을 별도로 확인한다.
+
+| 파일 | 용량 | 출처 |
+| --- | ---: | --- |
+| `Qwen3.5-0.8B-Q4_K_M.gguf` | 0.50 GiB | [Unsloth 변환본](https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF) |
+| `gemma-3-1b-it-Q4_K_M.gguf` | 0.75 GiB | [ggml-org 변환본](https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF) |
+| `Qwen3.5-2B-Q4_K_M.gguf` | 1.19 GiB | [Unsloth 변환본](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) |
+| `SmolLM3-Q4_K_M.gguf` | 1.78 GiB | [ggml-org 변환본](https://huggingface.co/ggml-org/SmolLM3-3B-GGUF) |
+| `granite-4.0-micro-Q4_K_M.gguf` | 1.96 GiB | [IBM 배포본](https://huggingface.co/ibm-granite/granite-4.0-micro-GGUF) |
+| `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | 2.33 GiB | [Unsloth 변환본](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF) |
+| `Qwen3.5-9B-Q4_K_M.gguf` | 5.29 GiB | [Unsloth 변환본](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) |
+| `gpt-oss-20b-MXFP4.gguf` | 11.28 GiB | [ggml-org 변환본](https://huggingface.co/ggml-org/gpt-oss-20b-GGUF) |
+
+폰이나 메모리가 적은 PC는 경량 0.5B~2B에 먼저 맞춘다. PC에서 빠른 텍스트 작업은 Qwen3-4B-Instruct-2507 Q4_K_M, 12 GiB급 VRAM에서 더 복잡한 요청을 비교할 때는 Qwen3.5-9B Q4_K_M을 후보로 둔다. gpt-oss-20b는 가중치 외 여유 메모리까지 고려해 16 GiB 이상 VRAM을 권장하며 CPU와 GPU에 나눠 올리는 구성도 가능하다. Qwen3.5는 텍스트 GGUF만 다운로드했다. 화면 이해를 적용하려면 해당 모델의 비전 구성 요소와 별도 검증이 필요하다.
+
+Windows RTX 5070 Ti Laptop GPU에서 llama.cpp `b12675`, CUDA, 문맥 2,048토큰으로 두 후보의 전 레이어를 GPU에 올렸다. 한국어 메모 추출 예제 세 건은 두 모델 모두 정확했다. 모델을 띄운 상태에서 첫 출력과 작업 완료의 중앙값은 4B가 각각 **46 ms / 180 ms**, 9B가 **139 ms / 392 ms**였다. 오래 걸리는 문서 종합의 성능과 정확도는 이 시험 범위 밖이다. 8개 GGUF는 총 26,921,589,248바이트(25.07 GiB)이며, 배포 파일의 길이 및 SHA-256을 대조했다.
 
 ## 선택형 계정 연결
 

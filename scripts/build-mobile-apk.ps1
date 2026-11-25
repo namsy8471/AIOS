@@ -28,10 +28,12 @@ $android = Join-Path $root 'android'
 $sources = @(Get-ChildItem -Recurse -File (Join-Path $android 'src') -Filter '*.java' | ForEach-Object FullName)
 $manifest = Join-Path $android 'AndroidManifest.xml'
 if ($Probe) {
-    $sources += (Join-Path $android 'probe/MobileProbe.java')
+    $sources += @(Get-ChildItem -Recurse -File (Join-Path $android 'probe') -Filter '*.java' | ForEach-Object FullName)
     $body = Get-Content -Raw -LiteralPath $manifest
-    $body.Replace('</manifest>', '<instrumentation android:name=".MobileProbe" android:targetPackage="org.aios.mobile" /></manifest>') |
-        Set-Content -LiteralPath "$stage/AndroidManifest.xml" -Encoding utf8
+    $activityTag = '<activity android:name=".MemoLatencyActivity" android:exported="false" android:screenOrientation="portrait" />'
+    $instrumentationTag = '<instrumentation android:name=".MobileProbe" android:targetPackage="org.aios.mobile" />'
+    $probeManifest = $body.Replace('</application>', "$activityTag</application>").Replace('</manifest>', "$instrumentationTag</manifest>")
+    $probeManifest | Set-Content -LiteralPath "$stage/AndroidManifest.xml" -Encoding utf8
     $manifest = "$stage/AndroidManifest.xml"
 }
 & (Join-Path $javaBin 'javac.exe') --release 11 -encoding UTF-8 -classpath $AndroidJar -d $classes @sources
