@@ -55,6 +55,12 @@ public final class ProductionMemoProbe extends MainActivity {
             View save = root.findViewWithTag("memo-preview-save");
             TextView result = root.findViewWithTag("memo-preview-text");
             await(probe, screen::hasWindowFocus);
+            probe.runOnMainSync(() -> {
+                root.findViewWithTag("settings-tab").performClick();
+                check(!input.isShown(), "Settings left the task composer visible");
+                root.findViewWithTag("workspace-tab").performClick();
+                check(input.isShown(), "Workspace did not restore the task composer");
+            });
 
             double[] samples = new double[100];
             for (int sample = -4; sample < samples.length; sample++) {
@@ -96,7 +102,9 @@ public final class ProductionMemoProbe extends MainActivity {
             check(fixture.equals(Files.readString(memo.toPath())), "Preview or cancel saved the memo");
 
             probe.runOnMainSync(() -> {
+                input.setText(COMMAND);
                 preview.performClick();
+                check(input.getText().length() == 0, "Sent command remained in the composer");
                 input.setText("메모에 달걀 추가");
                 check(!result.isShown(), "Editing left an old preview");
             });
@@ -120,7 +128,10 @@ public final class ProductionMemoProbe extends MainActivity {
             await(probe, preview::isEnabled);
             check("다른 버전".equals(Files.readString(memo.toPath())), "Stale approval modified the memo");
 
-            probe.runOnMainSync(preview::performClick);
+            probe.runOnMainSync(() -> {
+                input.setText(COMMAND);
+                preview.performClick();
+            });
             await(probe, save::isShown);
             probe.runOnMainSync(save::performClick);
             await(probe, preview::isEnabled);
@@ -130,6 +141,7 @@ public final class ProductionMemoProbe extends MainActivity {
             long within = Arrays.stream(samples).filter(value -> value <= 100).count();
             check(within >= 95, "Shipping preview exceeded the 100 ms p95 target");
             return new JSONObject().put("mode", "production-memo")
+                .put("workspace_navigation", true)
                 .put("samples", samples.length).put("within_100ms", within)
                 .put("p50_ms", (samples[49] + samples[50]) / 2)
                 .put("p95_ms", samples[94]).put("max_ms", samples[99])

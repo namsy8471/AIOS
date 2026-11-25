@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">AIOS</string>
+    <string name="app_name">TLA</string>
+    <string name="app_action_service">TLA 앱 작업</string>
+    <string name="app_action_description">승인한 앱과 화면에서 지정한 누르기 또는 스와이프를 한 번 실행합니다.</string>
 </resources>

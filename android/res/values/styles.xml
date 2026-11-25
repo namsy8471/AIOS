@@ -1,0 +1,12 @@
+<resources>
+    <color name="aios_icon_background">#11141A</color>
+    <style name="AiosTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">#11141A</item>
+        <item name="android:colorAccent">#9AE5CD</item>
+        <item name="android:statusBarColor">#11141A</item>
+        <item name="android:navigationBarColor">#11141A</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

@@ -1,13 +1,15 @@
-# 플립4와 Windows 협업 MVP
+# TLA · 플립4와 Windows 협업
 
 Android 앱이 한국어 지시를 받고, Windows PC는 더 긴 문서 작업을 맡는다. 첫 시연의 기준 기기는 갤럭시 Z 플립4 SM-F721N이다. Android 앱과 Windows 작업자는 같은 요청 형식을 사용하므로 이후 PC 작업자를 네이티브 애플리케이션이나 AIOS 가상 머신으로 옮길 수 있다.
+
+TLA는 **Thanks, Local Agent**의 약자다. 첫 화면은 대화이며, 하단 입력창에 `메모에 우유 추가`, `메모 보기` 또는 `오늘 날씨 검색`을 보낼 수 있다. 메모 변경과 검색 전송에는 각각 승인 단계가 있다. 하단의 **도구**에서 웹 검색과 앱 동작을 열고, **도구 · 설정**에서 문서 작업과 PC 연결을 관리할 수 있다. 대화 메시지는 앱이 열린 동안 표시되고, 승인해 저장한 메모와 보고서는 다음 실행에서도 읽을 수 있다. 기존 Android 패키지와 서명으로 업데이트하면 앱의 기존 파일을 이어서 사용한다.
 
 | 단계 | 결과 | 검증 |
 | --- | --- | --- |
 | 1 | 플립4에 설치 가능한 APK | 실기에서 앱이 시작되고 메모와 PC 작업 화면이 열린다. |
 | 2 | 휴대폰 단독 메모 작업 | 비행기 모드에서 한국어 지시를 로컬 모델로 해석하고, 미리 보기에서 승인하면 저장한다. 앱을 종료하고 다시 열어 본문을 비교한다. |
 | 3 | Windows 협업 | 폰에서 선택한 세 문서의 이름과 보낼 내용을 확인한다. 승인 후 Windows 로컬 모델이 회의 보고서 초안을 생성하고 폰이 결과를 받아 검토와 저장을 제공한다. |
-| 4 | 같은 작업 비교 | 고정 입력의 예상 결과를 확인하고 직접 실행과 AIOS 사용의 완료 시간과 사용자 개입 횟수를 기록한다. 앱이 열린 상태와 처음 시작한 상태를 구분한다. |
+| 4 | 같은 작업 비교 | 고정 입력의 예상 결과를 확인하고 직접 실행과 TLA 사용의 완료 시간과 사용자 개입 횟수를 기록한다. 앱이 열린 상태와 처음 시작한 상태를 구분한다. |
 
 현재 협업은 같은 로컬 네트워크에서 폰이 PC로 직접 HTTPS 요청을 보낸다. 앱은 페어링 파일의 인증서만 신뢰하고 서버 주소도 검사한다. PC 작업자는 페어링 토큰을 확인하고 승인한 텍스트 문서와 지시만 받는다. Windows의 모델 서버는 같은 PC의 루프백 주소에서 실행한다.
 
@@ -85,13 +87,25 @@ OpenCL은 Adreno 730에 37개 레이어 전체, 8개, 1개를 각각 오프로�
 
 일반 앱에는 같은 화면의 미리보기와 직접 명령의 백그라운드 왕복 제거를 적용했다. 화면에 표시된 메모의 버전을 사용하고 저장할 때 디스크의 버전을 다시 확인한다. 입력이 바뀌면 표시된 미리보기를 닫고 진행 중이던 추론의 결과도 버린다. `production-memo` 계측은 일반 앱의 화면과 처리 코드를 별도의 시험용 메모에서 실행했다. 100회 모두 100 ms 이내였으며, 중앙값 **11.9 ms**, 95백분위수 **21.9 ms**, 최댓값 **22.6 ms**였다. 취소, 지시 변경, 경량 모델 해석, 오래된 버전 저장 거부, 새 버전으로 다시 승인하는 흐름도 통과했다.
 
+대화 화면 적용 후 같은 방식으로 재시험했다. 입력이 대화에 들어가고 입력창이 비워지며, 메모 승인과 취소는 대화 화면에서 수행된다. 100회 모두 100 ms 이내였으며, 중앙값 **17.2 ms**, 95백분위수 **20.2 ms**, 최댓값 **22.4 ms**였다.
+
 변경 후 회귀 시험에서 비행기 모드 경량·대형 모델은 각각 1.72초, 8.66초에 미리보기를 만들었고, 저장 후 프로세스를 종료해도 원문과 버전이 복원됐다. Windows 로컬 모델의 Wi-Fi 보고서 왕복은 6.35초였다.
 
 ### 안드로이드 앱에서 예약과 다른 앱 조작
 
 - 시간에 맞춰 알림을 보내고, 사용자가 알림을 누르면 게임을 여는 흐름은 안드로이드 API로 구현할 수 있다. 정확한 알람은 앱의 용도와 특수 접근 권한에 따라 가능하다. [알람 예약](https://developer.android.com/develop/background-work/services/alarms) · [백그라운드 화면 실행](https://developer.android.com/guide/components/activities/secure-bal)
 - 잠금 해제 후 화면의 버튼을 누르는 흐름은 사용자가 접근성 서비스를 활성화하고, 게임에서 대상 UI를 식별할 방법과 자동화 허용 조건이 있을 때 구현할 수 있다. 별도 화면 캡처를 사용하는 경우 매 세션 사용자 승인이 필요하다. [접근성 서비스](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService) · [화면 캡처](https://developer.android.com/media/grow/media-projection)
-- PIN 등이 걸린 상태에서 일반 앱은 사용자 인증을 대신해 잠금을 풀 수 없다. Google Play는 접근성 API를 사용해 앱이 스스로 행동을 시작·계획·실행하는 방식을 제한하며, 정해진 규칙에 따른 자동화를 별도로 다룬다. 현재 AIOS Android 앱은 메모와 PC 작업 기능을 제공하며 예약 및 다른 앱 조작 기능은 구현 전이다. [Android 화면 잠금](https://developer.android.com/reference/android/app/KeyguardManager) · [Google Play 접근성 정책](https://support.google.com/googleplay/android-developer/answer/10964491)
+- PIN 등이 걸린 상태에서 일반 앱은 사용자 인증을 대신해 잠금을 풀 수 없다. Google Play는 접근성 API를 사용해 앱이 스스로 행동을 시작·계획·실행하는 방식을 제한하며, 정해진 규칙에 따른 자동화를 별도로 다룬다. [Android 화면 잠금](https://developer.android.com/reference/android/app/KeyguardManager) · [Google Play 접근성 정책](https://support.google.com/googleplay/android-developer/answer/10964491)
+
+#### TLA의 검색과 앱 작업 도구
+
+**웹 검색 · 앱 작업**에서 검색어를 검토하고 승인하면 Android 브라우저로 Google 검색 주소를 연다. 앱 작업은 Android 설정에서 **TLA 앱 작업** 접근성 서비스를 켠 뒤 사용할 수 있다. 실행할 앱, 누르기 또는 스와이프 방향, 화면 요소의 정확한 이름을 정하고 **한 번 실행**을 누른다. 현재 명령은 사용자가 구조화하며 모델은 앱 선택이나 클릭을 결정하지 않는다.
+
+앱 작업은 잠금이 풀린 상태에서 승인한 패키지의 활성 화면만 확인한다. 이름이 유일한 화면 요소의 접근성 클릭이나 카드 영역 내 스와이프 한 번을 전달한다. 다른 앱, 복수 후보, 잠금, 15초 제한, TLA 화면 복귀 시 멈춘다. Android가 입력을 받았다는 사실과 게임 서버 보상 결과는 별개이므로 화면에서 완료를 확인한다. 화면 요소가 접근성 트리에 없는 게임은 이 경로로 제어할 수 없다. 대상 앱의 허용 정책과 화면을 개별 검증해야 하며 예약 실행은 별도 기능이다. [Android 접근성 서비스](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
+
+`-Probe` APK의 `agent-actions` 계측으로 검색 승인과 취소, 안전한 URL 인코딩, 중복 요소와 패키지 불일치 거부, 테스트 출석 버튼 누르기 및 카드 양방향 스와이프를 확인한다. 실제 접근성 서비스 활성화 상태에서도 테스트 화면에서 같은 동작을 수행할 수 있다. 대기 후 중단 검사에는 약 15초가 추가된다.
+
+플립4에서 접근성 서비스를 켠 뒤 TLA와 패키지가 다른 시험 앱을 대상으로 한 번 누르기, 양방향 스와이프, 승인 취소, 대상이 없을 때 중단을 확인했다. 실제 게임과 데이팅 계정의 동작은 시험하지 않았다.
 
 iOS에서는 단축어의 시간 트리거와 앱이 공개한 App Intents를 조합할 수 있다. 대상 게임이 출석 동작을 공식적으로 노출하면 예약 실행을 시험할 수 있다. 일반 배포 앱용 공개 API로 다른 앱의 임의 버튼을 제어하는 경로는 확인되지 않았다. Xcode의 XCUIAutomation은 테스트 환경에서 앱 UI를 제어할 수 있다. [Apple 단축어 자동화](https://support.apple.com/guide/shortcuts/add-automations-apdfbdbd7123/ios) · [App Intents](https://developer.apple.com/documentation/appintents) · [XCUIAutomation](https://developer.apple.com/documentation/XCUIAutomation/recording-ui-automation-for-testing)
 

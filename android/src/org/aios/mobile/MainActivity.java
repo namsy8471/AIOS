@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.database.Cursor;
-import android.graphics.Insets;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
@@ -13,8 +12,8 @@ import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.View;
-import android.view.WindowInsets;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -27,6 +26,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +42,11 @@ public class MainActivity extends Activity {
     private static final int PICK_LARGE_MODEL = 4;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final List<Button> controls = new ArrayList<>();
+    private WorkspaceUi ui;
+    private ScrollView page;
+    private LinearLayout conversation;
+    private LinearLayout welcome;
+    private final ArrayDeque<View> messages = new ArrayDeque<>();
     private LinearLayout content;
     private TextView status;
     private TextView memo;
@@ -63,19 +68,85 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         engine = createEngine();
-        ScrollView page = new ScrollView(this);
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        page.addView(content);
-        page.setOnApplyWindowInsetsListener((view, window) -> {
-            Insets safe = window.getInsets(WindowInsets.Type.systemBars());
-            view.setPadding(safe.left + dp(20), safe.top + dp(12), safe.right + dp(20), safe.bottom + dp(16));
-            return window;
-        });
-        setContentView(page);
+        ui = new WorkspaceUi(this);
+        LinearLayout root = ui.screen();
+        LinearLayout heading = ui.row();
+        ui.pad(heading, 18, 8);
+        LinearLayout brand = ui.column();
+        brand.addView(ui.text(getApplicationInfo().loadLabel(getPackageManager()).toString(), 24, false));
+        brand.addView(ui.text("Thanks, Local Agent", 12, true));
+        heading.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        Button workTab = ui.button("대화", () -> {});
+        Button settingsTab = ui.button("도구 · 설정", () -> {});
+        workTab.setTag("workspace-tab");
+        settingsTab.setTag("settings-tab");
+        LinearLayout.LayoutParams workTabLayout = new LinearLayout.LayoutParams(-2, -2);
+        workTabLayout.rightMargin = ui.dp(6);
+        heading.addView(workTab, workTabLayout);
+        heading.addView(settingsTab);
+        root.addView(heading);
 
-        label("AIOS", 28);
-        instruction = input("예: 메모에 우유 추가", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        page = new ScrollView(this);
+        page.setFillViewport(true);
+        page.setClipToPadding(false);
+        page.setVerticalScrollBarEnabled(false);
+        LinearLayout body = ui.column();
+        ui.pad(body, 18, 8);
+        page.addView(body);
+        root.addView(page, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout workspace = ui.column();
+        LinearLayout settings = ui.column();
+        body.addView(workspace);
+        body.addView(settings);
+        conversation = workspace;
+        buildWelcome();
+        content = ui.card(settings);
+        label("이 휴대폰의 메모", 18);
+        memo = label("", 16);
+        memo.setHint("저장된 메모가 없습니다.");
+        memo.setTextIsSelectable(true);
+
+        content = ui.card(settings);
+        label("Windows 협업", 18);
+        files = label("선택한 회의 메모 없음", 14);
+        button("회의 메모 선택", () -> pick(PICK_NOTES, "text/*", true));
+        pcModelChoice = selector("Windows 로컬 모델", "ChatGPT 계정", "Claude 계정");
+        button("보낼 내용 확인", this::confirmDraftRequest);
+        label("저장한 보고서 초안", 16);
+        draft = label("", 15);
+        draft.setHint("저장된 보고서가 없습니다.");
+        draft.setTextIsSelectable(true);
+        button("Google Drive에 보내기", this::confirmDriveUpload);
+
+        content = ui.card(settings);
+        label("로컬 모델", 18);
+        modelChoice = selector("로컬 경량 모델", "로컬 대형 모델");
+        button("선택한 로컬 모델 가져오기", () ->
+            pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
+        content = ui.card(settings);
+        label("PC 연결", 18);
+        pcStatus = label("연결한 PC 없음", 14);
+        button("PC 페어링 파일 가져오기", () -> pick(PICK_PC, "*/*", false));
+        try {
+            pc = engine.pairedPc();
+            if (pc != null) pcStatus.setText("페어링된 PC · " + pc.endpoint);
+        } catch (Exception invalid) {
+            pcStatus.setText("PC 페어링 파일을 다시 가져오세요.");
+        }
+
+        status = ui.text(engine.weights(false).isFile() ? "로컬 모델 준비됨" : "설정에서 로컬 모델을 가져오세요.", 13, true);
+        LinearLayout.LayoutParams statusLayout = new LinearLayout.LayoutParams(-1, -2);
+        statusLayout.leftMargin = ui.dp(20);
+        statusLayout.rightMargin = ui.dp(20);
+        root.addView(status, statusLayout);
+        LinearLayout dock = ui.column();
+        dock.setPadding(ui.dp(18), 0, ui.dp(18), ui.dp(12));
+        content = ui.card(dock);
+        LinearLayout composer = content;
+        instruction = input("TLA에 지시하기", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        instruction.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        instruction.setMaxLines(3);
         instruction.setTag("memo-instruction");
         instruction.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
@@ -86,56 +157,135 @@ public class MainActivity extends Activity {
             }
             @Override public void afterTextChanged(Editable text) {}
         });
-        status = label(engine.weights(false).isFile() ? "로컬 모델 준비됨" : "로컬 모델을 가져오세요.", 15);
-        label("이 휴대폰의 메모", 20);
-        memo = label("", 16);
-        modelChoice = new Spinner(this);
-        ArrayAdapter<String> sizes = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
-                new String[]{"로컬 경량 모델", "로컬 대형 모델"});
-        sizes.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        modelChoice.setAdapter(sizes);
-        content.addView(modelChoice);
-        button("선택한 로컬 모델 가져오기", () ->
-            pick(modelChoice.getSelectedItemPosition() == 1 ? PICK_LARGE_MODEL : PICK_MODEL, "*/*", false));
-        button(content, "메모 변경 미리 보기", this::previewMemo).setTag("memo-preview-button");
+        LinearLayout actions = ui.row();
+        LinearLayout.LayoutParams actionRow = new LinearLayout.LayoutParams(-1, -2);
+        actionRow.topMargin = ui.dp(8);
+        composer.addView(actions, actionRow);
+        Button tools = ui.composerAction("+", "웹 검색 · 앱 작업", false,
+            () -> startActivity(new Intent(this, AgentActivity.class)));
+        Button preview = ui.composerAction("↑", "보내기", true, this::sendCommand);
+        preview.setTag("memo-preview-button");
+        controls.add(tools);
+        controls.add(preview);
+        actions.addView(tools, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+        actions.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        actions.addView(preview, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+        content = conversation;
         buildMemoPreview();
-        label("Windows PC에 작업 보내기", 20);
-        pcStatus = label("연결한 PC 없음", 15);
-        button("PC 페어링 파일 가져오기", () -> pick(PICK_PC, "*/*", false));
-        try {
-            pc = engine.pairedPc();
-            if (pc != null) pcStatus.setText("페어링된 PC · " + pc.endpoint);
-        } catch (Exception invalid) {
-            pcStatus.setText("PC 페어링 파일을 다시 가져오세요.");
-        }
-        files = label("선택한 회의 메모 없음", 15);
-        button("회의 메모 선택", () -> pick(PICK_NOTES, "text/*", true));
-        pcModelChoice = new Spinner(this);
-        ArrayAdapter<String> providers = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
-                new String[]{"Windows 로컬 모델", "ChatGPT 계정", "Claude 계정"});
-        providers.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        pcModelChoice.setAdapter(providers);
-        content.addView(pcModelChoice);
-        button("보낼 내용 확인", this::confirmDraftRequest);
-        label("저장한 보고서 초안", 20);
-        draft = label("", 16);
-        button("저장한 초안을 Google Drive에 보내기", this::confirmDriveUpload);
+        root.addView(dock);
+        workTab.setOnClickListener(view -> {
+            workspace.setVisibility(View.VISIBLE);
+            settings.setVisibility(View.GONE);
+            dock.setVisibility(View.VISIBLE);
+            ui.tone(workTab, true);
+            ui.tone(settingsTab, false);
+            page.scrollTo(0, 0);
+        });
+        settingsTab.setOnClickListener(view -> {
+            settings.setVisibility(View.VISIBLE);
+            workspace.setVisibility(View.GONE);
+            dock.setVisibility(View.GONE);
+            android.view.inputmethod.InputMethodManager keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
+            keyboard.hideSoftInputFromWindow(instruction.getWindowToken(), 0);
+            ui.tone(settingsTab, true);
+            ui.tone(workTab, false);
+            page.scrollTo(0, 0);
+        });
+        controls.add(workTab);
+        controls.add(settingsTab);
+        settings.setVisibility(View.GONE);
+        ui.tone(workTab, true);
+        setContentView(root);
         refresh();
     }
 
     MobileEngine createEngine() { return new MobileEngine(this); }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private void buildWelcome() {
+        welcome = ui.column();
+        ui.pad(welcome, 8, 16);
+        welcome.setGravity(Gravity.CENTER);
+        TextView title = ui.text("무엇을 할까요?", 30, false);
+        title.setGravity(Gravity.CENTER);
+        welcome.addView(title);
+        Button memoExample = ui.button("메모에 우유 추가", () -> setPrompt("메모에 우유 추가"));
+        Button searchExample = ui.button("오늘 날씨 검색", () -> setPrompt("오늘 날씨 검색"));
+        LinearLayout examples = ui.row();
+        LinearLayout.LayoutParams row = new LinearLayout.LayoutParams(-1, -2);
+        row.topMargin = ui.dp(16);
+        welcome.addView(examples, row);
+        ui.paired(examples, memoExample, searchExample);
+        conversation.addView(welcome);
+        page.addOnLayoutChangeListener((view, left, top, right, bottom, prevLeft, prevTop, prevRight, prevBottom) -> {
+            if (bottom - top != prevBottom - prevTop) {
+                welcome.setMinimumHeight(Math.min(ui.dp(420), (bottom - top) * 3 / 4));
+            }
+        });
+    }
+
+    private void setPrompt(String value) {
+        instruction.setText(value);
+        instruction.setSelection(value.length());
+    }
+
+    private void appendMessage(String value, boolean user) {
+        welcome.setVisibility(View.GONE);
+        LinearLayout.LayoutParams entry = new LinearLayout.LayoutParams(user ? -2 : -1, -2);
+        entry.gravity = user ? Gravity.END : Gravity.START;
+        if (user) entry.leftMargin = ui.dp(36);
+        entry.topMargin = ui.dp(10);
+        TextView bubble = ui.bubble(value, user);
+        messages.addLast(bubble);
+        conversation.addView(bubble, entry);
+        if (messages.size() > 40) conversation.removeView(messages.removeFirst());
+        scrollConversation();
+    }
+
+    private void scrollConversation() {
+        page.post(() -> page.scrollTo(0, page.getChildAt(0).getHeight()));
+    }
+
+    private void sendCommand() {
+        String text = instruction.getText().toString().strip();
+        if (text.isEmpty()) return;
+        if (text.length() > 512) {
+            status.setText("지시를 512자 이내로 입력해 주세요.");
+            return;
+        }
+        clearMemoPreview();
+        instruction.setText("");
+        appendMessage(text, true);
+        getSystemService(android.view.inputmethod.InputMethodManager.class)
+            .hideSoftInputFromWindow(instruction.getWindowToken(), 0);
+        String query = searchQuery(text);
+        if (query != null) {
+            AgentActivity.confirmSearch(this, query, result -> appendMessage(result, false));
+        } else if (text.equals("메모 보기") || text.equals("메모 보여줘")) {
+            String stored = memo.getText().toString();
+            appendMessage(stored.isEmpty() ? "저장된 메모가 없습니다." : stored, false);
+        } else if (text.startsWith("Windows에 ")) {
+            confirmDraftRequest(text);
+        } else if (text.startsWith("메모에 ")) {
+            previewMemo(text);
+        } else {
+            appendMessage("메모 추가, 웹 검색, Windows 문서 작업을 요청할 수 있어요. 다른 앱을 조작하려면 도구에서 대상 앱과 동작을 선택해 주세요.", false);
+        }
+    }
+
+    private static String searchQuery(String text) {
+        if (text.startsWith("검색 ")) return text.substring(3);
+        for (String suffix : new String[] {" 검색해 줘", " 검색해줘", " 검색"}) {
+            if (text.endsWith(suffix)) return text.substring(0, text.length() - suffix.length());
+        }
+        return null;
+    }
 
     private TextView label(String text, int size) {
         return label(content, text, size);
     }
 
     private TextView label(LinearLayout parent, String text, int size) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextSize(size);
-        view.setPadding(0, dp(7), 0, dp(7));
+        TextView view = ui.text(text, size, size <= 14);
         parent.addView(view);
         return view;
     }
@@ -144,6 +294,7 @@ public class MainActivity extends Activity {
         EditText view = new EditText(this);
         view.setHint(hint);
         view.setInputType(type);
+        ui.field(view);
         content.addView(view);
         return view;
     }
@@ -153,30 +304,44 @@ public class MainActivity extends Activity {
     }
 
     private Button button(LinearLayout parent, String text, Runnable action) {
-        Button view = new Button(this);
-        view.setAllCaps(false);
-        view.setText(text);
-        view.setOnClickListener(clicked -> action.run());
-        parent.addView(view);
+        Button view = ui.button(text, action);
+        LinearLayout.LayoutParams item = new LinearLayout.LayoutParams(-1, -2);
+        item.topMargin = ui.dp(8);
+        parent.addView(view, item);
         controls.add(view);
         return view;
     }
 
+    private Spinner selector(String... values) {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        ui.selector(spinner);
+        content.addView(spinner);
+        return spinner;
+    }
+
     private void buildMemoPreview() {
-        memoPreview = new LinearLayout(this);
-        memoPreview.setOrientation(LinearLayout.VERTICAL);
+        memoPreview = ui.card(content);
         memoPreview.setVisibility(View.GONE);
         label(memoPreview, "메모에 추가할 내용", 18);
         memoAddition = label(memoPreview, "", 16);
         memoAddition.setTag("memo-preview-text");
-        LinearLayout actions = new LinearLayout(this);
-        button(actions, "취소", () -> {
+        LinearLayout actions = ui.row();
+        Button cancel = ui.button("취소", () -> {
             clearMemoPreview();
             status.setText("메모 변경 취소");
-        }).setTag("memo-preview-cancel");
-        button(actions, "저장", this::approveMemo).setTag("memo-preview-save");
+            appendMessage("메모 변경을 취소했어요.", false);
+        });
+        Button save = ui.button("저장", this::approveMemo);
+        cancel.setTag("memo-preview-cancel");
+        save.setTag("memo-preview-save");
+        ui.tone(save, true);
+        ui.paired(actions, cancel, save);
+        controls.add(cancel);
+        controls.add(save);
         memoPreview.addView(actions);
-        content.addView(memoPreview);
     }
 
     private void refresh() {
@@ -211,8 +376,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void previewMemo() {
-        String text = instruction.getText().toString();
+    private void previewMemo(String text) {
         boolean larger = modelChoice.getSelectedItemPosition() == 1;
         long start = SystemClock.elapsedRealtime();
         int request = ++memoRequest;
@@ -244,12 +408,14 @@ public class MainActivity extends Activity {
         pendingMemo = proposal;
         memoAddition.setText(proposal.addition);
         memoPreview.setVisibility(View.VISIBLE);
+        memoPreview.bringToFront();
         status.setText("미리 보기 · " + (SystemClock.elapsedRealtime() - start) + " ms");
         memoPreview.post(() -> {
             if (pendingMemo == proposal) {
                 memoPreview.requestRectangleOnScreen(new Rect(0, 0, memoPreview.getWidth(), memoPreview.getHeight()), true);
             }
         });
+        scrollConversation();
     }
 
     private void clearMemoPreview() {
@@ -266,6 +432,7 @@ public class MainActivity extends Activity {
         run("메모 저장 중", () -> { engine.saveMemo(proposal.revision, proposal.addition); return null; }, ignored -> {
             refresh();
             status.setText("메모 저장 완료 · " + (SystemClock.elapsedRealtime() - save) + " ms");
+            appendMessage("메모에 저장했어요.", false);
         });
     }
 
@@ -280,7 +447,10 @@ public class MainActivity extends Activity {
     }
 
     private void confirmDraftRequest() {
-        String task = instruction.getText().toString().trim();
+        confirmDraftRequest(instruction.getText().toString().strip());
+    }
+
+    private void confirmDraftRequest(String task) {
         PcPairing paired = pc;
         JSONArray sources = selected;
         String provider = new String[]{"local", "chatgpt", "claude"}[pcModelChoice.getSelectedItemPosition()];
@@ -318,6 +488,7 @@ public class MainActivity extends Activity {
     private void reviewDraft(JSONObject result) {
         String text = result.optString("draft");
         status.setText("PC 왕복 " + result.optLong("round_trip_ms") + " ms · 추론 " + result.optLong("inference_ms") + " ms");
+        appendMessage("Windows가 보고서 초안을 만들었어요.", false);
         new AlertDialog.Builder(this).setTitle("Windows가 만든 보고서 초안").setMessage(text)
             .setNegativeButton("취소", null).setPositiveButton("저장", (dialog, action) ->
                 run("초안 저장 중", () -> { engine.saveDraft(text); return null; }, ignored -> {

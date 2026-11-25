@@ -32,6 +32,7 @@ if ($Probe) {
     $body = Get-Content -Raw -LiteralPath $manifest
     $activityTag = '<activity android:name=".MemoLatencyActivity" android:exported="false" android:screenOrientation="portrait" />'
     $activityTag += '<activity android:name=".ProductionMemoProbe" android:exported="false" android:screenOrientation="portrait" />'
+    $activityTag += '<activity android:name=".AgentActionProbe" android:exported="false" android:showWhenLocked="true" android:turnScreenOn="true" />'
     $instrumentationTag = '<instrumentation android:name=".MobileProbe" android:targetPackage="org.aios.mobile" />'
     $probeManifest = $body.Replace('</application>', "$activityTag</application>").Replace('</manifest>', "$instrumentationTag</manifest>")
     $probeManifest | Set-Content -LiteralPath "$stage/AndroidManifest.xml" -Encoding utf8

@@ -34,6 +34,8 @@ public final class MobileProbe extends Instrumentation {
                 report = MemoLatencyProbe.run(this, app);
             } else if ("production-memo".equals(mode)) {
                 report = ProductionMemoProbe.run(this, app);
+            } else if ("agent-actions".equals(mode)) {
+                report = AgentActionProbe.run(this, app);
             } else if ("direct".equals(mode)) {
                 checkDirectMemo(engine, report);
             } else if ("local".equals(mode) || "large".equals(mode)) {
