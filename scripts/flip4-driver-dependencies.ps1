@@ -27,8 +27,20 @@ foreach ($line in $lines) {
 }
 
 $report = [ordered]@{}
-foreach ($module in 'msm_drm', 'fst2ca78y_i2c', 'zinitix_ts') {
+$displayDrivers = @('msm_drm', 'fst2ca78y_i2c', 'zinitix_ts')
+foreach ($module in $displayDrivers) {
     if (-not $loaded.ContainsKey($module)) { throw "Driver module $module is not loaded." }
+}
+$driverFiles = [ordered]@{
+    msm_drm = 'msm_drm.ko'
+    fst2ca78y_i2c = 'fst2ca78y_i2c.ko'
+    zinitix_ts = 'zinitix_ts.ko'
+    i2c_msm_geni = 'i2c-msm-geni.ko'
+    ufs_qcom = 'ufs_qcom.ko'
+    phy_qcom_ufs_qmp_v4_cape = 'phy-qcom-ufs-qmp-v4-cape.ko'
+}
+foreach ($module in $driverFiles.Keys) {
+    if (-not $loaded.ContainsKey($module)) { continue }
     $seen = [Collections.Generic.HashSet[string]]::new()
     $remaining = [Collections.Generic.Stack[string]]::new()
     $remaining.Push($module)
@@ -38,10 +50,15 @@ foreach ($module in 'msm_drm', 'fst2ca78y_i2c', 'zinitix_ts') {
             if ($dependency -and $seen.Add($dependency)) { $remaining.Push($dependency) }
         }
     }
+    $path = '/vendor_dlkm/lib/modules/' + $driverFiles[$module]
+    $fileSize = & $Adb -d shell "if [ -f '$path' ]; then stat -c %s '$path'; fi"
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect module metadata for $module." }
+    $length = ($fileSize -join '').Trim()
     $report[$module] = [ordered]@{
         size_bytes = $loaded[$module]
         direct_module_dependencies = @($dependencies[$module] | Where-Object { $_ } | Sort-Object)
         transitive_module_dependencies = @($seen | Sort-Object)
+        vendor_dlkm_file_size_bytes = if ($length -match '^\d+$') { [int64]$length } else { $null }
     }
 }
 $report | ConvertTo-Json -Depth 4
