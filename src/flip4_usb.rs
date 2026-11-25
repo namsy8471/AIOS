@@ -2,11 +2,11 @@
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, symlink};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
 
-fn open_serial(name: &str) -> io::Result<fs::File> {
+fn serial_node(name: &str) -> io::Result<PathBuf> {
     let sysfs = Path::new("/sys/class/tty").join(name).join("dev");
     let deadline = Instant::now() + Duration::from_secs(5);
     let numbers = loop {
@@ -23,7 +23,8 @@ fn open_serial(name: &str) -> io::Result<fs::File> {
         .split_once(':')
         .and_then(|(major, minor)| Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?)))
         .ok_or_else(|| io::Error::other("invalid serial device number"))?;
-    let node = std::ffi::CString::new(format!("/dev/{name}"))?;
+    let path = Path::new("/dev").join(name);
+    let node = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
     if unsafe {
         libc::mknod(
             node.as_ptr(),
@@ -34,11 +35,15 @@ fn open_serial(name: &str) -> io::Result<fs::File> {
     {
         return Err(io::Error::last_os_error());
     }
+    Ok(path)
+}
+
+fn open_serial(path: &Path) -> io::Result<fs::File> {
     let serial = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-        .open(Path::new("/dev").join(name))?;
+        .open(path)?;
     let mut term = std::mem::MaybeUninit::uninit();
     let fd = serial.as_raw_fd();
     if unsafe { libc::tcgetattr(fd, term.as_mut_ptr()) } != 0 {
@@ -52,7 +57,7 @@ fn open_serial(name: &str) -> io::Result<fs::File> {
     Ok(serial)
 }
 
-fn configure(controller: &str) -> io::Result<fs::File> {
+fn configure(controller: &str) -> io::Result<PathBuf> {
     if !Path::new("/sys/class/udc").join(controller).is_dir() {
         return Err(io::Error::other(format!(
             "USB controller {controller} is unavailable"
@@ -78,6 +83,7 @@ fn configure(controller: &str) -> io::Result<fs::File> {
     fs::write(gadget.join("idVendor"), "0x0525\n")?;
     fs::write(gadget.join("idProduct"), "0xa4a7\n")?;
     fs::write(gadget.join("bDeviceClass"), "0x02\n")?;
+    fs::write(gadget.join("bDeviceSubClass"), "0x02\n")?;
     fs::create_dir(gadget.join("strings/0x409"))?;
     fs::write(
         gadget.join("strings/0x409/product"),
@@ -92,21 +98,31 @@ fn configure(controller: &str) -> io::Result<fs::File> {
         .trim()
         .parse::<u32>()
         .map_err(io::Error::other)?;
-    open_serial(&format!("ttyGS{index}"))
+    serial_node(&format!("ttyGS{index}"))
 }
 
 pub fn broadcast(snapshot: &str) -> io::Result<()> {
-    let mut serial = configure("a600000.dwc3")?;
+    let path = configure("a600000.dwc3")?;
+    let packet = format!("\n{snapshot}");
+    let mut serial = None;
     loop {
-        // Opening the port late or reconnecting still receives a complete report.
-        let _ = serial.write_all(snapshot.as_bytes());
+        if serial.is_none() {
+            serial = open_serial(&path).ok();
+        }
+        // Reopen after a hangup and start each report on a fresh line.
+        if let Some(port) = &mut serial
+            && let Err(error) = port.write_all(packet.as_bytes())
+            && error.kind() != io::ErrorKind::WouldBlock
+        {
+            serial = None;
+        }
         thread::sleep(Duration::from_secs(1));
     }
 }
 
 pub fn verify_dummy(snapshot: &str) -> io::Result<()> {
-    let mut gadget = configure("dummy_udc.0")?;
-    let mut host = open_serial("ttyACM0")?;
+    let mut gadget = open_serial(&configure("dummy_udc.0")?)?;
+    let mut host = open_serial(&serial_node("ttyACM0")?)?;
     gadget.write_all(snapshot.as_bytes())?;
     let mut received = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(5);
