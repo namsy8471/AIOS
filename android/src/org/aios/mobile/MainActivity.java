@@ -276,11 +276,16 @@ public class MainActivity extends Activity {
             confirmDraftRequest(text);
         } else if (text.startsWith("메모에 ")) {
             previewMemo(text);
-        } else if (AgentActivity.handleChatApp(this, text, result -> appendMessage(result, false))) {
+        } else if (AgentActivity.handleChatApp(this, text, this::replyToAppTask)
+                || AgentActivity.handleScreenTask(this, text, modelChoice.getSelectedItemPosition() == 1, this::replyToAppTask)) {
             return;
         } else {
             planChatCommand(text);
         }
+    }
+
+    private void replyToAppTask(String result) {
+        if (!isFinishing() && !isDestroyed()) appendMessage(result, false);
     }
 
     private void planChatCommand(String text) {

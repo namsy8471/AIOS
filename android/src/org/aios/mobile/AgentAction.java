@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.accessibilityservice.GestureDescription;
 import java.util.ArrayDeque;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -61,6 +63,35 @@ final class AgentAction {
         return node != null && packageName.contentEquals(node.getPackageName() == null ? "" : node.getPackageName());
     }
 
+    static List<String> buttonLabels(AccessibilityNodeInfo root, String packageName) {
+        ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
+        LinkedHashSet<String> labels = new LinkedHashSet<>();
+        nodes.push(root);
+        int visited = 0;
+        while (!nodes.isEmpty() && labels.size() < 16) {
+            AccessibilityNodeInfo node = nodes.pop();
+            if (++visited > MAX_NODES || node.getChildCount() > MAX_NODES - visited - nodes.size()) {
+                throw new IllegalStateException("화면 요소가 너무 많습니다.");
+            }
+            if (!packageName.equals(String.valueOf(node.getPackageName())) || !node.isVisibleToUser()
+                    || node.isPassword() || node.isEditable()) continue;
+            for (CharSequence name : new CharSequence[]{node.getText(), node.getContentDescription()}) {
+                if (name == null || !node.isEnabled()) continue;
+                String label = name.toString();
+                if (label.isBlank() || label.length() > 96 || !label.equals(label.strip()) || label.contains("<|")
+                        || label.chars().anyMatch(Character::isISOControl)) continue;
+                AgentAction action = new AgentAction(packageName, label, Kind.CLICK);
+                if (action.clickableTarget(node) != null) labels.add(label);
+                break;
+            }
+            for (int i = node.getChildCount() - 1; i >= 0; i--) {
+                AccessibilityNodeInfo child = node.getChild(i, 0);
+                if (child != null) nodes.push(child);
+            }
+        }
+        return List.copyOf(labels);
+    }
+
     boolean matchesLabel(AccessibilityNodeInfo node) {
         return label.contentEquals(node.getText() == null ? "" : node.getText())
             || label.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription());
@@ -92,11 +123,17 @@ final class AgentAction {
     }
 
     AccessibilityNodeInfo clickTarget(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo target = clickableTarget(node);
+        if (target != null) return target;
+        throw new IllegalStateException("이 요소는 접근성으로 누를 수 없습니다.");
+    }
+
+    private AccessibilityNodeInfo clickableTarget(AccessibilityNodeInfo node) {
         if (node.isClickable() && node.isEnabled()) return node;
         AccessibilityNodeInfo parent = node.getParent(0);
         if (owns(parent) && parent.getWindowId() == node.getWindowId()
                 && parent.isVisibleToUser() && parent.isEnabled() && parent.isClickable()) return parent;
-        throw new IllegalStateException("이 요소는 접근성으로 누를 수 없습니다.");
+        return null;
     }
 
     GestureDescription swipe(AccessibilityNodeInfo node, Rect window, int displayId, float density) {

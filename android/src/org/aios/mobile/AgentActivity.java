@@ -30,6 +30,9 @@ public final class AgentActivity extends Activity {
         "^(.+?)\\s*에서\\s+(.+?)(?:\\s+버튼)?(?:을|를)?\\s+(?:눌러|클릭)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
     private static final Pattern CHAT_OPEN = Pattern.compile(
         "^(.+?)(?:\\s+앱(?:을)?)?\\s+(?:열어|실행)(?:\\s*(?:해\\s*)?(?:줘|주세요))?[.!?]*$");
+    private static final Pattern CHAT_TASK = Pattern.compile("^(.+?)\\s*에서\\s+(.+)$");
+    private static final Pattern MASTER_DUEL_TASK = Pattern.compile(
+        "^((?:유희왕\\s*)?마스터\\s*듀얼)\\s+(?=(?:일일\\s*)?(?:출석|출첵))(.+)$");
     private WorkspaceUi ui;
     private LinearLayout content;
     private TextView status;
@@ -206,6 +209,44 @@ public final class AgentActivity extends Activity {
     }
 
     static void offerChatApp(Activity activity, String name, String actionLabel, boolean modelProposed, Consumer<String> reply) {
+        resolveChatApp(activity, name, modelProposed && actionLabel == null, actionLabel == null,
+            choice -> runChatApp(activity, choice, actionLabel, reply), reply);
+    }
+
+    static boolean handleScreenTask(Activity activity, String command, boolean larger, Consumer<String> reply) {
+        Matcher request = CHAT_TASK.matcher(command);
+        if (!request.matches()) {
+            request = MASTER_DUEL_TASK.matcher(command);
+            if (!request.matches()) return false;
+        }
+        if (!new MobileEngine(activity).weights(larger).isFile()) {
+            reply.accept("선택한 로컬 모델을 가져오면 앱 화면에서 다음 동작을 찾을 수 있어요.");
+            return true;
+        }
+        String goal = request.group(2);
+        resolveChatApp(activity, request.group(1), false, false, choice -> {
+            if (!requireAccessibility(activity, reply)) return;
+            Intent launch = activity.getPackageManager().getLaunchIntentForPackage(choice.packageName);
+            if (launch == null) {
+                reply.accept("선택한 앱을 열 수 없어요.");
+                return;
+            }
+            new AlertDialog.Builder(activity).setTitle("앱 화면 확인")
+                .setMessage("‘" + choice.label + "’에서 ‘" + goal + "’에 필요한 버튼을 찾아볼까요?")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("화면 확인", (dialog, which) -> {
+                    if (!AppActionService.inspect(choice.packageName, goal, larger, reply)) {
+                        reply.accept("화면 잠금이나 진행 중인 작업 때문에 시작할 수 없어요.");
+                    } else if (!open(activity, launch, reply)) {
+                        AppActionService.stop("앱을 열지 못했어요.");
+                    }
+                }).show();
+        }, reply);
+        return true;
+    }
+
+    private static void resolveChatApp(Activity activity, String name, boolean confirmExact, boolean opens,
+            Consumer<AppChoice> selected, Consumer<String> reply) {
         try {
             String requestedName = AgentAction.field(name, 128);
             String alias = normalized(requestedName);
@@ -218,8 +259,8 @@ public final class AgentActivity extends Activity {
                     matches.add(choice);
                 }
             }
-            if (matches.size() == 1 && (!modelProposed || actionLabel != null)) {
-                runChatApp(activity, matches.get(0), actionLabel, reply);
+            if (matches.size() == 1 && !confirmExact) {
+                selected.accept(matches.get(0));
                 return;
             }
             if (matches.isEmpty() && alias.length() >= 2) {
@@ -237,13 +278,12 @@ public final class AgentActivity extends Activity {
             if (matches.size() == 1) {
                 AppChoice suggestion = matches.get(0);
                 String question = "‘" + suggestion.label + "’ 앱을 말씀하신 건가요?";
-                if (actionLabel == null) question += " 맞으면 이 앱을 열게요.";
+                if (opens) question += " 맞으면 이 앱을 열게요.";
                 clarify.setMessage(question)
-                    .setPositiveButton(actionLabel == null ? "맞아요, 열기" : "맞아요",
-                        (dialog, which) -> runChatApp(activity, suggestion, actionLabel, reply));
+                    .setPositiveButton(opens ? "맞아요, 열기" : "맞아요", (dialog, which) -> selected.accept(suggestion));
             } else {
                 clarify.setItems(matches.stream().map(AppChoice::toString).toArray(String[]::new),
-                    (dialog, which) -> runChatApp(activity, matches.get(which), actionLabel, reply));
+                    (dialog, which) -> selected.accept(matches.get(which)));
             }
             clarify.show();
         } catch (IllegalArgumentException error) {
@@ -258,14 +298,7 @@ public final class AgentActivity extends Activity {
             else if (launch == null) reply.accept("선택한 앱을 열 수 없습니다.");
             return;
         }
-        if (!AppActionService.available()) {
-            new AlertDialog.Builder(activity).setTitle("TLA 앱 작업 접근성 설정")
-                .setMessage("다른 앱에서 버튼을 누르려면 Android 접근성 설정에서 TLA 앱 작업을 켜 주세요.")
-                .setNegativeButton("취소", null)
-                .setPositiveButton("설정 열기", (dialog, which) ->
-                    open(activity, new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), reply)).show();
-            return;
-        }
+        if (!requireAccessibility(activity, reply)) return;
         try {
             AgentAction action = new AgentAction(choice.packageName, label, AgentAction.Kind.CLICK);
             new AlertDialog.Builder(activity).setTitle("앱 동작 승인")
@@ -276,6 +309,16 @@ public final class AgentActivity extends Activity {
         } catch (IllegalArgumentException error) {
             reply.accept(error.getMessage());
         }
+    }
+
+    private static boolean requireAccessibility(Activity activity, Consumer<String> reply) {
+        if (AppActionService.available()) return true;
+        new AlertDialog.Builder(activity).setTitle("TLA 앱 작업 접근성 설정")
+            .setMessage("다른 앱의 화면에서 작업하려면 Android 접근성 설정에서 TLA 앱 작업을 켜 주세요.")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("설정 열기", (dialog, which) ->
+                open(activity, new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), reply)).show();
+        return false;
     }
 
     private static String normalized(String label) { return label.replaceAll("\\s+", ""); }

@@ -130,6 +130,10 @@ OpenCL은 Adreno 730에 37개 레이어 전체, 8개, 1개를 각각 오프로�
 
 플립4의 별도 시험 앱에서 출석 버튼을 한 번 누르고 완료 문구를 확인한 뒤 승인을 기다리는 것도 검증했다. 화면에 **확인하고 계속**이 표시되는 동안 스와이프 횟수는 0이었고, 승인 후 오른쪽으로 한 번 스와이프했다.
 
+대화에서 `시험 앱에서 오늘 출석을 챙겨줘`처럼 목표를 보내면 TLA가 그 앱의 화면을 열고, 실제로 표시된 접근성 버튼 이름을 로컬 모델에 전달한다. 플립4의 별도 시험 앱에서 모델이 설정 버튼과 출석 버튼 중 출석을 골랐고, 화면 위에서 제안한 동작을 승인한 뒤에만 한 번 눌렀다. 이 경로는 화면에서 다음 한 동작을 제안한다.
+
+마스터 듀얼 첫 화면은 플립4에서 게임 창의 접근성 요소 6개를 공개했으며 이름이 붙은 클릭 대상은 0개였다. 타이틀을 직접 터치하니 업데이트된 사용 약관 재동의 안내가 나왔다. 두 화면의 이미지를 별도로 폰의 CPU에서 llama.cpp에 전달한 단일 실행 시험에서 **Qwen3.5-0.8B Q4_K_M + F16**은 두 화면을 모두 타이틀로 분류했다(7.1~8.1초). **Qwen3.5-2B Q4_K_M + F16**은 두 화면을 각각 타이틀과 약관으로 분류했다(27.3~30.2초). 이미지 토큰 상한을 96으로 낮춘 재시험에서도 두 화면을 구분했고 15.5~15.7초가 걸렸다. 이 시험은 두 이미지의 분류이며, Android 앱의 실시간 비전 추론과 게임 출석 자동화는 별도 구현이 필요하다. [llama.cpp 멀티모달 문서](https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md)
+
 iOS에서는 단축어의 시간 트리거와 앱이 공개한 App Intents를 조합할 수 있다. 대상 게임이 출석 동작을 공식적으로 노출하면 예약 실행을 시험할 수 있다. 일반 배포 앱용 공개 API로 다른 앱의 임의 버튼을 제어하는 경로는 확인되지 않았다. Xcode의 XCUIAutomation은 테스트 환경에서 앱 UI를 제어할 수 있다. [Apple 단축어 자동화](https://support.apple.com/guide/shortcuts/add-automations-apdfbdbd7123/ios) · [App Intents](https://developer.apple.com/documentation/appintents) · [XCUIAutomation](https://developer.apple.com/documentation/XCUIAutomation/recording-ui-automation-for-testing)
 
 ### 비교용 로컬 모델
