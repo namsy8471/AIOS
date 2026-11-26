@@ -1,6 +1,23 @@
-# TLA · Thanks, Local Agent
+# AIOS · TLA (Thanks, Local Agent)
 
-TLA는 Android와 Windows에서 쓰는 로컬 에이전트입니다. 플립4에서 로컬 모델로 메모 변경을 제안하고, 검색을 브라우저에 열고, 사용자가 승인한 앱 동작을 수행합니다. Windows 앱에서는 열린 창을 선택하고 로컬 모델이 제안한 버튼 동작을 승인할 수 있습니다. 긴 문서 작업은 Wi-Fi로 연결한 Windows 로컬 모델 작업자에게 맡길 수 있습니다. [Android 앱과 Windows 협업](docs/mobile-collaboration.md)
+AIOS는 로컬 AI 에이전트가 앱을 관측하고 조작하며, 사용자 승인과 작업 취소·복원을 지원하는 실행 환경을 만드는 프로젝트입니다. TLA는 그 사용 흐름을 기존 Android와 Windows에서 구현한 앱입니다. AIOS 런타임은 Linux 커널 위에서 문서 편집, 권한 격리, 저장과 복원을 검증하고 있습니다. [아키텍처 설계](docs/architecture.md)
+
+## 현재 진척
+
+2026년 11월 26일 기준 `main`에 반영된 구현과 검증입니다.
+
+| 영역 | 구현 및 검증 현황 |
+| --- | --- |
+| TLA Android | 갤럭시 Z 플립4의 Android에서 로컬 모델 추론과 메모 저장을 실기 검증했습니다. 앱은 메모 변경을 제안하고 검색을 브라우저에서 열거나, 화면에서 확인한 앱 동작을 실행합니다. [Android 실기 검증](docs/mobile-collaboration.md) |
+| TLA Windows와 휴대폰 연결 | Windows UI Automation으로 열린 창의 버튼을 찾아 승인 후 실행합니다. 같은 Wi-Fi에 연결한 Android에 PC에서 지시를 보낼 수 있고, Android는 긴 문서 작업을 Windows 로컬 모델에 맡길 수 있습니다. [Windows 데스크톱 앱](#windows-데스크톱-앱) · [Android와 Windows 협업](docs/mobile-collaboration.md) |
+| AIOS 문서 런타임 | x86_64 QEMU에서 MCP로 한글 문서를 수정하고 재부팅 후 본문을 대조했습니다. 별도 CI에서는 파일 작업 취소·복원과 Linux·Windows 테스트 편집기의 저장 및 모달 감지 시 중단을 확인했습니다. [가상 부팅과 문서 시험](#초기-aios-부팅-실험) |
+| AIOS ARM64와 플립4 이식 | 플립4 참조 커널을 사용한 QEMU에서 로컬 모델로 메모를 수정하고 재부팅 뒤 같은 해시로 복원했습니다. 대상 실기기(`SM-F721N`, `F721NKSU8IZJC`)의 부트로더는 잠겨 있고 개발자 옵션에 OEM 잠금 해제가 표시되지 않아, AIOS 자체 부팅은 아직 검증하지 못했습니다. [플립4 참조 커널 시험](#플립4-커널로-가상-메모장-실행) |
+
+## 목표와 다음 검증
+
+1. **갤럭시 Z 플립4에 AIOS를 이식합니다.** AIOS를 직접 부팅해 화면·터치, 기기 내 모델 추론, 메모 저장과 재부팅 후 복원을 한 흐름으로 검증합니다.
+2. **x86_64 실물 PC에 AIOS를 이식합니다.** UEFI 부팅, 그래픽 환경, MCP 문서 편집과 재부팅 후 저장 내용 복원을 확인합니다.
+3. **Linux와 Windows 앱을 연결합니다.** Linux 호스트와 Windows KVM 게스트 사이에서 편집·저장·취소를 재현하고, UI 변경부터 호스트 관측까지 p95 50ms 미만을 목표로 측정합니다. 실사용 앱에서 입력 격리, 권한 정책, 작업 복원을 검증합니다. [남은 통합 검증](#남은-통합-검증)
 
 ## Windows 데스크톱 앱
 
@@ -57,11 +74,6 @@ python aios_mvp.py --model-port 18080 --resume work-1 --instruction "'승인 요
 | GTK 앱을 열고 접근성 API로 입력·저장 | 12/12 | 326.2 ms | 291.8–716.3 ms |
 
 GTK 측정에는 편집기 시작과 저장 확인이 포함됩니다. 두 경로 모두 모델 추론과 VM 부팅 시간은 제외합니다. 이미 열린 앱을 조작하는 시간, 스크린샷 기반 조작 시간, Windows에서의 성능은 별도 측정 대상입니다. [첫 번째 실행](https://github.com/namsy8471/AIOS/actions/runs/45373950240) · [두 번째 실행](https://github.com/namsy8471/AIOS/actions/runs/45373951004)
-
-## 개발 우선순위
-
-1. **스마트폰에 AIOS를 이식합니다.** 첫 대상은 갤럭시 Z 플립4입니다. 실기기에서 AIOS를 부팅하고 화면·터치, 로컬 모델, 메모 저장과 재부팅 후 복원을 검증합니다. 확인한 실물 모델은 `SM-F721N`, 펌웨어는 `F721NKSU8IZJC`입니다. 이 기기는 현재 부트로더가 잠겨 있고 개발자 옵션에 OEM 잠금 해제가 표시되지 않습니다. 기존 Android 안에서 로컬 추론과 AIOS 저장을 검증했고, AIOS 자체 부팅은 미검증입니다.
-2. **컴퓨터에 AIOS를 이식합니다.** x86_64 PC에서 AIOS 자체를 부팅하고 문서 도구, 그래픽 환경, 저장·복원을 검증합니다. Windows 앱의 Computer Use 속도 개선은 컴퓨터에서 기존 앱을 연동하는 작업으로 이어갑니다.
 
 ## 첫 번째 실험
 
